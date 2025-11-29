@@ -70,12 +70,13 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class AudioEngine:
-    """Shared audio engine for all tabs"""
+    """Shared audio engine for all tabs - CONTINUOUS PLAYBACK until STOP"""
     
     def __init__(self):
         self.pyaudio: Optional[pyaudio.PyAudio] = None
         self.stream = None
         self.playing = False
+        self.looping = False  # NEW: for continuous playback
         self.current_signal: Optional[np.ndarray] = None
         self.current_stereo: Optional[Tuple[np.ndarray, np.ndarray]] = None
         self.playback_position = 0
@@ -115,16 +116,18 @@ class AudioEngine:
         if 0 <= idx < len(self.devices):
             self.selected_device = self.devices[idx]['index']
     
-    def play_mono(self, signal: np.ndarray, callback=None):
+    def play_mono(self, signal: np.ndarray, callback=None, loop: bool = False):
         """Play mono signal"""
         self.current_signal = signal
         self.current_stereo = None
+        self.looping = loop
         self._start_playback(1, callback)
     
-    def play_stereo(self, left: np.ndarray, right: np.ndarray, callback=None):
-        """Play stereo signal"""
+    def play_stereo(self, left: np.ndarray, right: np.ndarray, callback=None, loop: bool = False):
+        """Play stereo signal - loop=True for continuous playback"""
         self.current_stereo = (left, right)
         self.current_signal = None
+        self.looping = loop
         self._start_playback(2, callback)
     
     def _start_playback(self, channels: int, callback=None):
@@ -140,7 +143,7 @@ class AudioEngine:
         thread.start()
     
     def _playback_thread(self, channels: int, callback):
-        """Audio playback thread"""
+        """Audio playback thread - LOOPS if self.looping is True"""
         try:
             self.pyaudio = pyaudio.PyAudio()
             
@@ -166,13 +169,19 @@ class AudioEngine:
             self.stream = self.pyaudio.open(**stream_kwargs)
             
             chunk_size = 1024 * channels * 4
-            position = 0
             
-            while position < len(data) and self.playing:
-                chunk = data[position:position + chunk_size]
-                if chunk:
-                    self.stream.write(chunk)
-                position += chunk_size
+            # LOOP until stopped
+            while self.playing:
+                position = 0
+                while position < len(data) and self.playing:
+                    chunk = data[position:position + chunk_size]
+                    if chunk:
+                        self.stream.write(chunk)
+                    position += chunk_size
+                
+                # If not looping, exit after one play
+                if not self.looping:
+                    break
             
             self.stream.stop_stream()
             self.stream.close()
@@ -183,12 +192,14 @@ class AudioEngine:
         
         finally:
             self.playing = False
+            self.looping = False
             if callback:
                 callback()
     
     def stop(self):
         """Stop playback"""
         self.playing = False
+        self.looping = False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -196,7 +207,7 @@ class AudioEngine:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class BinauralTab:
-    """Binaural beats with phase angle control"""
+    """Binaural beats with phase angle control - CONTINUOUS PLAYBACK"""
     
     def __init__(self, parent, audio_engine: AudioEngine):
         self.parent = parent
@@ -204,14 +215,17 @@ class BinauralTab:
         self.frame = ttk.Frame(parent)
         
         # State
+        self.base_freq = tk.DoubleVar(value=432.0)  # Base frequency
+        self.beat_freq = tk.DoubleVar(value=8.0)    # BEAT FREQUENCY (battimenti)
         self.freq_left = tk.DoubleVar(value=432.0)
         self.freq_right = tk.DoubleVar(value=440.0)
         self.phase_angle = tk.DoubleVar(value=137.5)
         self.amplitude = tk.DoubleVar(value=0.7)
-        self.duration = tk.DoubleVar(value=5.0)
         self.waveform = tk.StringVar(value="golden_reversed")
+        self.link_mode = tk.StringVar(value="beat")  # "beat" = use battimenti, "manual" = manual L/R
         
         self._setup_ui()
+        self._update_frequencies()  # Initial sync
     
     def _setup_ui(self):
         """Build the UI"""
@@ -219,31 +233,73 @@ class BinauralTab:
         left_frame = ttk.LabelFrame(self.frame, text="🎛️ Controls", padding=10)
         left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
         
-        # Frequency controls
-        freq_frame = ttk.LabelFrame(left_frame, text="Frequencies", padding=5)
-        freq_frame.pack(fill='x', pady=5)
-        
-        ttk.Label(freq_frame, text="Left (Hz):").grid(row=0, column=0, sticky='w')
-        ttk.Entry(freq_frame, textvariable=self.freq_left, width=10).grid(row=0, column=1)
-        ttk.Scale(freq_frame, from_=20, to=1000, variable=self.freq_left, 
-                  orient='horizontal', length=150).grid(row=0, column=2)
-        
-        ttk.Label(freq_frame, text="Right (Hz):").grid(row=1, column=0, sticky='w')
-        ttk.Entry(freq_frame, textvariable=self.freq_right, width=10).grid(row=1, column=1)
-        ttk.Scale(freq_frame, from_=20, to=1000, variable=self.freq_right,
-                  orient='horizontal', length=150).grid(row=1, column=2)
-        
-        # Beat frequency presets
-        beat_frame = ttk.LabelFrame(left_frame, text="Beat Frequency Presets", padding=5)
+        # === BATTIMENTI (Beat Frequency) - MAIN CONTROL ===
+        beat_frame = ttk.LabelFrame(left_frame, text="🌀 BATTIMENTI (Beat Frequency)", padding=10)
         beat_frame.pack(fill='x', pady=5)
         
-        beats = [("Delta 2Hz", 2), ("Theta 6Hz", 6), ("Alpha 10Hz", 10), 
-                 ("Beta 20Hz", 20), ("Gamma 40Hz", 40), ("Golden φ", 1.618)]
+        # Mode selector
+        mode_frame = ttk.Frame(beat_frame)
+        mode_frame.pack(fill='x', pady=5)
+        ttk.Radiobutton(mode_frame, text="🔗 Battimenti Mode", variable=self.link_mode,
+                       value="beat", command=self._update_frequencies).pack(side='left', padx=10)
+        ttk.Radiobutton(mode_frame, text="✋ Manual L/R", variable=self.link_mode,
+                       value="manual").pack(side='left', padx=10)
         
-        for i, (name, beat) in enumerate(beats):
-            btn = ttk.Button(beat_frame, text=name, width=10,
-                           command=lambda b=beat: self._set_beat(b))
-            btn.grid(row=i//3, column=i%3, padx=2, pady=2)
+        # Base frequency (carrier)
+        base_row = ttk.Frame(beat_frame)
+        base_row.pack(fill='x', pady=3)
+        ttk.Label(base_row, text="Base Freq (Hz):", width=15).pack(side='left')
+        ttk.Entry(base_row, textvariable=self.base_freq, width=8).pack(side='left')
+        base_scale = ttk.Scale(base_row, from_=20, to=800, variable=self.base_freq,
+                               orient='horizontal', length=180, command=lambda e: self._update_frequencies())
+        base_scale.pack(side='left', padx=5)
+        
+        # Beat frequency (battimenti) - THE KEY SLIDER
+        beat_row = ttk.Frame(beat_frame)
+        beat_row.pack(fill='x', pady=3)
+        ttk.Label(beat_row, text="Battimenti (Hz):", width=15).pack(side='left')
+        self.beat_entry = ttk.Entry(beat_row, textvariable=self.beat_freq, width=8)
+        self.beat_entry.pack(side='left')
+        beat_scale = ttk.Scale(beat_row, from_=0.5, to=50, variable=self.beat_freq,
+                               orient='horizontal', length=180, command=lambda e: self._update_frequencies())
+        beat_scale.pack(side='left', padx=5)
+        
+        # Beat presets
+        preset_row = ttk.Frame(beat_frame)
+        preset_row.pack(fill='x', pady=5)
+        ttk.Label(preset_row, text="Presets:").pack(side='left')
+        
+        beat_presets = [
+            ("δ 2Hz", 2), ("θ 6Hz", 6), ("α 10Hz", 10), 
+            ("β 20Hz", 20), ("γ 40Hz", 40), ("φ", PHI)
+        ]
+        
+        for name, beat in beat_presets:
+            btn = ttk.Button(preset_row, text=name, width=6,
+                           command=lambda b=beat: self._set_beat_preset(b))
+            btn.pack(side='left', padx=2)
+        
+        # Calculated frequencies display (read-only when in beat mode)
+        calc_frame = ttk.LabelFrame(left_frame, text="📊 Resulting Frequencies", padding=5)
+        calc_frame.pack(fill='x', pady=5)
+        
+        self.calc_label = ttk.Label(calc_frame, text="L: 432.0 Hz | R: 440.0 Hz | Beat: 8.0 Hz",
+                                    font=('Courier', 10, 'bold'))
+        self.calc_label.pack(pady=5)
+        
+        # Manual frequency controls (shown but linked in beat mode)
+        manual_frame = ttk.LabelFrame(left_frame, text="Manual Frequencies (active in Manual mode)", padding=5)
+        manual_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(manual_frame, text="Left (Hz):").grid(row=0, column=0, sticky='w')
+        ttk.Entry(manual_frame, textvariable=self.freq_left, width=10).grid(row=0, column=1)
+        ttk.Scale(manual_frame, from_=20, to=1000, variable=self.freq_left, 
+                  orient='horizontal', length=150).grid(row=0, column=2)
+        
+        ttk.Label(manual_frame, text="Right (Hz):").grid(row=1, column=0, sticky='w')
+        ttk.Entry(manual_frame, textvariable=self.freq_right, width=10).grid(row=1, column=1)
+        ttk.Scale(manual_frame, from_=20, to=1000, variable=self.freq_right,
+                  orient='horizontal', length=150).grid(row=1, column=2)
         
         # Phase angle
         phase_frame = ttk.LabelFrame(left_frame, text="Phase Angle", padding=5)
@@ -272,23 +328,19 @@ class BinauralTab:
             ttk.Radiobutton(wave_frame, text=wf, variable=self.waveform, 
                           value=wf).pack(side='left', padx=10)
         
-        # Duration & Amplitude
+        # Amplitude only (no duration - continuous!)
         param_frame = ttk.Frame(left_frame)
         param_frame.pack(fill='x', pady=5)
         
-        ttk.Label(param_frame, text="Duration (s):").pack(side='left')
-        ttk.Scale(param_frame, from_=1, to=30, variable=self.duration,
-                  orient='horizontal', length=100).pack(side='left')
-        
         ttk.Label(param_frame, text="Amplitude:").pack(side='left', padx=(20, 0))
         ttk.Scale(param_frame, from_=0, to=1, variable=self.amplitude,
-                  orient='horizontal', length=100).pack(side='left')
+                  orient='horizontal', length=150).pack(side='left')
         
-        # Playback buttons
+        # Playback buttons - BIG
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill='x', pady=10)
         
-        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY", command=self._play)
+        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY (continuous)", command=self._play)
         self.play_btn.pack(side='left', padx=5)
         
         self.stop_btn = ttk.Button(btn_frame, text="⏹ STOP", command=self._stop, state='disabled')
@@ -304,19 +356,36 @@ class BinauralTab:
         self.canvas.pack(pady=10)
         
         # Info label
-        self.info_var = tk.StringVar(value="Ready")
-        ttk.Label(right_frame, textvariable=self.info_var).pack()
+        self.info_var = tk.StringVar(value="Ready - Audio will play continuously until STOP")
+        ttk.Label(right_frame, textvariable=self.info_var, wraplength=280).pack()
         
         # Initial draw
         self._draw_phase_circle()
         
         # Bind updates
         self.phase_angle.trace_add('write', lambda *args: self._draw_phase_circle())
+        self.beat_freq.trace_add('write', lambda *args: self._update_frequencies())
+        self.base_freq.trace_add('write', lambda *args: self._update_frequencies())
     
-    def _set_beat(self, beat: float):
-        """Set beat frequency"""
-        base = self.freq_left.get()
-        self.freq_right.set(base + beat)
+    def _set_beat_preset(self, beat: float):
+        """Set beat frequency preset"""
+        self.beat_freq.set(beat)
+        self._update_frequencies()
+    
+    def _update_frequencies(self):
+        """Update L/R frequencies based on beat mode"""
+        if self.link_mode.get() == "beat":
+            base = self.base_freq.get()
+            beat = self.beat_freq.get()
+            # L = base, R = base + beat
+            self.freq_left.set(base)
+            self.freq_right.set(base + beat)
+        
+        # Update display
+        l = self.freq_left.get()
+        r = self.freq_right.get()
+        b = abs(r - l)
+        self.calc_label.config(text=f"L: {l:.1f} Hz | R: {r:.1f} Hz | Beat: {b:.2f} Hz")
     
     def _draw_phase_circle(self):
         """Draw phase visualization"""
@@ -352,18 +421,23 @@ class BinauralTab:
         # Phase value
         self.canvas.create_text(cx, cy + r + 20, text=f"Phase: {phase:.2f}°", 
                                fill='#ffd700', font=('Courier', 10, 'bold'))
+        
+        # Show beat frequency
+        beat = abs(self.freq_right.get() - self.freq_left.get())
+        self.canvas.create_text(cx, cy + r + 40, text=f"Beat: {beat:.2f} Hz",
+                               fill='#00ff88', font=('Courier', 10, 'bold'))
     
-    def _generate_binaural(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Generate binaural beat signal"""
+    def _generate_binaural(self, duration: float = 2.0) -> Tuple[np.ndarray, np.ndarray]:
+        """Generate binaural beat signal - short buffer for looping"""
         freq_l = self.freq_left.get()
         freq_r = self.freq_right.get()
         phase = np.radians(self.phase_angle.get())
         amp = self.amplitude.get()
-        dur = self.duration.get()
         wf = self.waveform.get()
         
-        num_samples = int(SAMPLE_RATE * dur)
-        t = np.linspace(0, dur, num_samples, endpoint=False)
+        # Generate a buffer (will be looped)
+        num_samples = int(SAMPLE_RATE * duration)
+        t = np.linspace(0, duration, num_samples, endpoint=False)
         
         # Generate waveforms
         if wf == "sine":
@@ -374,9 +448,17 @@ class BinauralTab:
             left = amp * self._golden_wave(2 * np.pi * freq_l * t, reversed=(wf == "golden_reversed"))
             right = amp * self._golden_wave(2 * np.pi * freq_r * t + phase, reversed=(wf == "golden_reversed"))
         
-        # Apply envelope
-        env = self._golden_envelope(num_samples)
-        return left * env, right * env
+        # Smooth crossfade for seamless loop
+        crossfade_samples = int(SAMPLE_RATE * 0.02)  # 20ms crossfade
+        fade_in = np.linspace(0, 1, crossfade_samples)
+        fade_out = np.linspace(1, 0, crossfade_samples)
+        
+        left[:crossfade_samples] *= fade_in
+        left[-crossfade_samples:] *= fade_out
+        right[:crossfade_samples] *= fade_in
+        right[-crossfade_samples:] *= fade_out
+        
+        return left, right
     
     def _golden_wave(self, phase: np.ndarray, reversed: bool = True) -> np.ndarray:
         """Generate PHI-based waveform"""
@@ -410,14 +492,16 @@ class BinauralTab:
         return env
     
     def _play(self):
-        """Start playback"""
-        left, right = self._generate_binaural()
+        """Start CONTINUOUS playback - loops until STOP"""
+        left, right = self._generate_binaural(duration=2.0)  # 2s buffer, looped
         
         self.play_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
-        self.info_var.set("🔊 Playing...")
+        beat = abs(self.freq_right.get() - self.freq_left.get())
+        self.info_var.set(f"🔊 Playing... Beat: {beat:.2f} Hz (Press STOP to end)")
         
-        self.audio.play_stereo(left, right, callback=self._on_playback_done)
+        # Play with loop=True for continuous playback
+        self.audio.play_stereo(left, right, callback=self._on_playback_done, loop=True)
     
     def _stop(self):
         """Stop playback"""
@@ -428,7 +512,7 @@ class BinauralTab:
         """Callback when playback ends"""
         self.play_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
-        self.info_var.set("Ready")
+        self.info_var.set("Ready - Press PLAY for continuous audio")
     
     def _launch_3d(self):
         """Launch 3D oscilloscope"""
