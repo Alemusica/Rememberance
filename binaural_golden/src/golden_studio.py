@@ -1410,9 +1410,14 @@ class MolecularTab:
             
             # For each atom, get its REAL spectral lines
             for i, atom in enumerate(mol.atoms):
-                # Phase from bond angle + golden ratio offset for this atom
-                phase_idx = i % len(base_phases)
-                atom_base_phase = base_phases[phase_idx] + (2 * np.pi * PHI_CONJUGATE * i)
+                # Phase from bond angle ONLY for this atom
+                # First atom: phase = 0 (reference)
+                # Other atoms: phase = bond angle in radians
+                if i == 0:
+                    atom_base_phase = 0.0  # Reference atom, no phase shift
+                else:
+                    phase_idx = (i - 1) % len(base_phases)
+                    atom_base_phase = base_phases[phase_idx]  # Bond angle phase ONLY
                 
                 # Stereo position from mass
                 pan = self.sounder.mass_to_pan(atom.mass, total_mass)
@@ -1429,9 +1434,11 @@ class MolecularTab:
                                 scaled = self.sounder.spectral_sounder.scale_to_audio(lines)
                                 
                                 # Add each spectral line
+                                # Use SAME phases as SpectralTab for consistency!
                                 for j, (freq, amp) in enumerate(scaled):
-                                    # Phase: combine atom phase with golden sequence
-                                    line_phase = atom_base_phase + (2 * np.pi * PHI_CONJUGATE * j)
+                                    # Phase: bond angle phase for this atom
+                                    # (NO extra golden offset - must match single element!)
+                                    line_phase = atom_base_phase
                                     
                                     all_frequencies.append(freq)
                                     all_amplitudes.append(amp * 0.8)  # Scale down a bit
