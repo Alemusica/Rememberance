@@ -66,23 +66,30 @@ except ImportError:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AUDIO ENGINE (shared)
+# AUDIO ENGINE (shared) - CALLBACK-BASED for TRUE CONTINUOUS PLAYBACK
 # ══════════════════════════════════════════════════════════════════════════════
 
 class AudioEngine:
-    """Shared audio engine for all tabs - CONTINUOUS PLAYBACK until STOP"""
+    """Shared audio engine using CALLBACK streaming for gapless playback"""
     
     def __init__(self):
-        self.pyaudio: Optional[pyaudio.PyAudio] = None
+        self.pyaudio_instance: Optional[pyaudio.PyAudio] = None
         self.stream = None
         self.playing = False
-        self.looping = False  # NEW: for continuous playback
-        self.current_signal: Optional[np.ndarray] = None
-        self.current_stereo: Optional[Tuple[np.ndarray, np.ndarray]] = None
-        self.playback_position = 0
+        
+        # Real-time generation state
+        self.phase_left = 0.0
+        self.phase_right = 0.0
+        self.freq_left = 432.0
+        self.freq_right = 440.0
+        self.phase_offset = 0.0  # Phase angle offset in radians
+        self.amplitude = 0.7
+        self.waveform_mode = "sine"  # sine, golden, golden_reversed
+        
+        # Thread safety
         self.lock = threading.Lock()
         
-        # Scan devices
+        # Devices
         self.devices = []
         self.selected_device = None
         self._scan_devices()
@@ -116,90 +123,218 @@ class AudioEngine:
         if 0 <= idx < len(self.devices):
             self.selected_device = self.devices[idx]['index']
     
-    def play_mono(self, signal: np.ndarray, callback=None, loop: bool = False):
-        """Play mono signal"""
-        self.current_signal = signal
-        self.current_stereo = None
-        self.looping = loop
-        self._start_playback(1, callback)
+    def set_parameters(self, freq_left: float, freq_right: float, 
+                       phase_angle_deg: float, amplitude: float, 
+                       waveform: str = "sine"):
+        """Update generation parameters (thread-safe)"""
+        with self.lock:
+            self.freq_left = freq_left
+            self.freq_right = freq_right
+            self.phase_offset = np.radians(phase_angle_deg)
+            self.amplitude = amplitude
+            self.waveform_mode = waveform
     
-    def play_stereo(self, left: np.ndarray, right: np.ndarray, callback=None, loop: bool = False):
-        """Play stereo signal - loop=True for continuous playback"""
-        self.current_stereo = (left, right)
-        self.current_signal = None
-        self.looping = loop
-        self._start_playback(2, callback)
+    def _golden_wave_sample(self, phase: float, reversed: bool = True) -> float:
+        """Generate single golden wave sample"""
+        theta = phase % (2 * np.pi)
+        if reversed:
+            theta = 2 * np.pi - theta
+        
+        t = theta / (2 * np.pi)
+        rise = PHI_CONJUGATE
+        
+        if t < rise:
+            return np.sin(np.pi * t / rise / 2)
+        else:
+            return np.cos(np.pi * (t - rise) / (1 - rise) / 2)
     
-    def _start_playback(self, channels: int, callback=None):
-        """Start audio playback in thread"""
+    def _generate_chunk(self, frame_count: int) -> bytes:
+        """Generate audio chunk in real-time (called by callback)"""
+        with self.lock:
+            freq_l = self.freq_left
+            freq_r = self.freq_right
+            phase_off = self.phase_offset
+            amp = self.amplitude
+            waveform = self.waveform_mode
+        
+        # Pre-calculate phase increments
+        phase_inc_left = 2 * np.pi * freq_l / SAMPLE_RATE
+        phase_inc_right = 2 * np.pi * freq_r / SAMPLE_RATE
+        
+        # Generate samples
+        output = np.empty(frame_count * 2, dtype=np.float32)
+        
+        for i in range(frame_count):
+            # Generate sample based on waveform type
+            if waveform == "sine":
+                left_sample = amp * np.sin(self.phase_left)
+                right_sample = amp * np.sin(self.phase_right + phase_off)
+            elif waveform == "golden":
+                left_sample = amp * self._golden_wave_sample(self.phase_left, reversed=False)
+                right_sample = amp * self._golden_wave_sample(self.phase_right + phase_off, reversed=False)
+            else:  # golden_reversed
+                left_sample = amp * self._golden_wave_sample(self.phase_left, reversed=True)
+                right_sample = amp * self._golden_wave_sample(self.phase_right + phase_off, reversed=True)
+            
+            # Interleave stereo (L, R, L, R, ...)
+            output[i * 2] = left_sample
+            output[i * 2 + 1] = right_sample
+            
+            # Update phases (continuous)
+            self.phase_left += phase_inc_left
+            self.phase_right += phase_inc_right
+            
+            # Keep phases in range to avoid precision issues
+            if self.phase_left > 2 * np.pi:
+                self.phase_left -= 2 * np.pi
+            if self.phase_right > 2 * np.pi:
+                self.phase_right -= 2 * np.pi
+        
+        return output.tobytes()
+    
+    def start_continuous(self, freq_left: float, freq_right: float,
+                         phase_angle_deg: float, amplitude: float,
+                         waveform: str = "sine"):
+        """Start continuous callback-based playback"""
         if not HAS_PYAUDIO:
+            print("PyAudio not available")
             return
         
-        self.playing = True
-        self.playback_position = 0
+        if self.playing:
+            self.stop()
         
-        thread = threading.Thread(target=self._playback_thread, args=(channels, callback))
-        thread.daemon = True
-        thread.start()
-    
-    def _playback_thread(self, channels: int, callback):
-        """Audio playback thread - LOOPS if self.looping is True"""
+        # Set parameters
+        self.set_parameters(freq_left, freq_right, phase_angle_deg, amplitude, waveform)
+        
+        # Reset phases
+        self.phase_left = 0.0
+        self.phase_right = 0.0
+        
         try:
-            self.pyaudio = pyaudio.PyAudio()
+            self.pyaudio_instance = pyaudio.PyAudio()
             
-            if channels == 2 and self.current_stereo:
-                left, right = self.current_stereo
-                stereo = np.empty(len(left) * 2, dtype=np.float32)
-                stereo[0::2] = left.astype(np.float32)
-                stereo[1::2] = right.astype(np.float32)
-                data = stereo.tobytes()
-            else:
-                data = self.current_signal.astype(np.float32).tobytes()
+            def audio_callback(in_data, frame_count, time_info, status):
+                if not self.playing:
+                    return (None, pyaudio.paComplete)
+                data = self._generate_chunk(frame_count)
+                return (data, pyaudio.paContinue)
             
-            stream_kwargs = {
+            stream_params = {
                 'format': pyaudio.paFloat32,
-                'channels': channels,
+                'channels': 2,  # STEREO
                 'rate': SAMPLE_RATE,
                 'output': True,
+                'frames_per_buffer': 1024,
+                'stream_callback': audio_callback
             }
             
             if self.selected_device is not None:
-                stream_kwargs['output_device_index'] = self.selected_device
+                stream_params['output_device_index'] = self.selected_device
             
-            self.stream = self.pyaudio.open(**stream_kwargs)
+            self.stream = self.pyaudio_instance.open(**stream_params)
+            self.playing = True
             
-            chunk_size = 1024 * channels * 4
-            
-            # LOOP until stopped
-            while self.playing:
-                position = 0
-                while position < len(data) and self.playing:
-                    chunk = data[position:position + chunk_size]
-                    if chunk:
-                        self.stream.write(chunk)
-                    position += chunk_size
-                
-                # If not looping, exit after one play
-                if not self.looping:
-                    break
-            
-            self.stream.stop_stream()
-            self.stream.close()
-            self.pyaudio.terminate()
+            print(f"🔊 Audio started: L={freq_left:.1f}Hz R={freq_right:.1f}Hz Beat={abs(freq_right-freq_left):.2f}Hz")
             
         except Exception as e:
             print(f"Audio error: {e}")
-        
-        finally:
-            self.playing = False
-            self.looping = False
-            if callback:
-                callback()
+            import traceback
+            traceback.print_exc()
     
     def stop(self):
         """Stop playback"""
         self.playing = False
-        self.looping = False
+        
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except:
+                pass
+            self.stream = None
+        
+        if self.pyaudio_instance:
+            try:
+                self.pyaudio_instance.terminate()
+            except:
+                pass
+            self.pyaudio_instance = None
+        
+        print("⏹ Audio stopped")
+    
+    # === Legacy methods for Spectral/Molecular tabs (buffer-based) ===
+    
+    def play_mono(self, signal: np.ndarray, callback=None, loop: bool = False):
+        """Play pre-generated mono signal (for spectral/molecular)"""
+        if self.playing:
+            self.stop()
+        self._play_buffer(signal, None, 1, callback, loop)
+    
+    def play_stereo(self, left: np.ndarray, right: np.ndarray, callback=None, loop: bool = False):
+        """Play pre-generated stereo signal (for spectral/molecular)"""
+        if self.playing:
+            self.stop()
+        self._play_buffer(left, right, 2, callback, loop)
+    
+    def _play_buffer(self, left_or_mono: np.ndarray, right: Optional[np.ndarray], 
+                     channels: int, callback, loop: bool):
+        """Play pre-generated buffer"""
+        if not HAS_PYAUDIO:
+            return
+        
+        def playback_thread():
+            try:
+                pa = pyaudio.PyAudio()
+                
+                if channels == 2 and right is not None:
+                    stereo = np.empty(len(left_or_mono) * 2, dtype=np.float32)
+                    stereo[0::2] = left_or_mono.astype(np.float32)
+                    stereo[1::2] = right.astype(np.float32)
+                    data = stereo.tobytes()
+                else:
+                    data = left_or_mono.astype(np.float32).tobytes()
+                
+                stream_kwargs = {
+                    'format': pyaudio.paFloat32,
+                    'channels': channels,
+                    'rate': SAMPLE_RATE,
+                    'output': True,
+                }
+                
+                if self.selected_device is not None:
+                    stream_kwargs['output_device_index'] = self.selected_device
+                
+                stream = pa.open(**stream_kwargs)
+                self.playing = True
+                
+                chunk_size = 4096 * channels * 4
+                
+                while self.playing:
+                    position = 0
+                    while position < len(data) and self.playing:
+                        chunk = data[position:position + chunk_size]
+                        if chunk:
+                            stream.write(chunk)
+                        position += chunk_size
+                    
+                    if not loop:
+                        break
+                
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+                
+            except Exception as e:
+                print(f"Audio error: {e}")
+            
+            finally:
+                self.playing = False
+                if callback:
+                    callback()
+        
+        thread = threading.Thread(target=playback_thread)
+        thread.daemon = True
+        thread.start()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -374,18 +509,21 @@ class BinauralTab:
     
     def _update_frequencies(self):
         """Update L/R frequencies based on beat mode"""
-        if self.link_mode.get() == "beat":
-            base = self.base_freq.get()
-            beat = self.beat_freq.get()
-            # L = base, R = base + beat
-            self.freq_left.set(base)
-            self.freq_right.set(base + beat)
-        
-        # Update display
-        l = self.freq_left.get()
-        r = self.freq_right.get()
-        b = abs(r - l)
-        self.calc_label.config(text=f"L: {l:.1f} Hz | R: {r:.1f} Hz | Beat: {b:.2f} Hz")
+        try:
+            if self.link_mode.get() == "beat":
+                base = self.base_freq.get()
+                beat = self.beat_freq.get()
+                # L = base, R = base + beat
+                self.freq_left.set(base)
+                self.freq_right.set(base + beat)
+            
+            # Update display
+            l = self.freq_left.get()
+            r = self.freq_right.get()
+            b = abs(r - l)
+            self.calc_label.config(text=f"L: {l:.1f} Hz | R: {r:.1f} Hz | Beat: {b:.2f} Hz")
+        except:
+            pass  # Ignore errors during slider updates
     
     def _draw_phase_circle(self):
         """Draw phase visualization"""
@@ -492,16 +630,20 @@ class BinauralTab:
         return env
     
     def _play(self):
-        """Start CONTINUOUS playback - loops until STOP"""
-        left, right = self._generate_binaural(duration=2.0)  # 2s buffer, looped
+        """Start CONTINUOUS callback-based playback"""
+        freq_l = self.freq_left.get()
+        freq_r = self.freq_right.get()
+        phase = self.phase_angle.get()
+        amp = self.amplitude.get()
+        wf = self.waveform.get()
         
         self.play_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
-        beat = abs(self.freq_right.get() - self.freq_left.get())
-        self.info_var.set(f"🔊 Playing... Beat: {beat:.2f} Hz (Press STOP to end)")
+        beat = abs(freq_r - freq_l)
+        self.info_var.set(f"🔊 Playing... L:{freq_l:.0f}Hz R:{freq_r:.0f}Hz Beat:{beat:.2f}Hz")
         
-        # Play with loop=True for continuous playback
-        self.audio.play_stereo(left, right, callback=self._on_playback_done, loop=True)
+        # Use callback-based continuous playback
+        self.audio.start_continuous(freq_l, freq_r, phase, amp, wf)
     
     def _stop(self):
         """Stop playback"""
