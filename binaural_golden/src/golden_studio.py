@@ -66,25 +66,40 @@ except ImportError:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AUDIO ENGINE (shared) - CALLBACK-BASED for TRUE CONTINUOUS PLAYBACK
+# AUDIO ENGINE - REAL-TIME PARAMETER UPDATES, NO GLITCHES
 # ══════════════════════════════════════════════════════════════════════════════
 
 class AudioEngine:
-    """Shared audio engine using CALLBACK streaming for gapless playback"""
+    """
+    Callback-based audio engine with REAL-TIME parameter updates.
+    
+    Changes to parameters (frequency, phase, amplitude, etc.) are applied
+    IMMEDIATELY without stopping playback - no glitches, smooth transitions.
+    """
     
     def __init__(self):
         self.pyaudio_instance: Optional[pyaudio.PyAudio] = None
         self.stream = None
         self.playing = False
         
-        # Real-time generation state
-        self.phase_left = 0.0
-        self.phase_right = 0.0
+        # === BINAURAL MODE parameters ===
+        self.mode = "binaural"  # "binaural", "spectral", "molecular"
+        
+        # Binaural parameters (real-time updateable)
         self.freq_left = 432.0
         self.freq_right = 440.0
-        self.phase_offset = 0.0  # Phase angle offset in radians
+        self.phase_offset = np.radians(137.5)  # Phase angle in radians
         self.amplitude = 0.7
-        self.waveform_mode = "sine"  # sine, golden, golden_reversed
+        self.waveform_mode = "sine"
+        
+        # Phase accumulators (continuous across callbacks)
+        self.phase_left = 0.0
+        self.phase_right = 0.0
+        
+        # === SPECTRAL/MOLECULAR MODE parameters ===
+        self.spectral_frequencies = []  # List of (freq, amplitude, phase)
+        self.spectral_phases = []  # Phase accumulators for each frequency
+        self.stereo_positions = []  # -1 to 1 for panning
         
         # Thread safety
         self.lock = threading.Lock()
@@ -98,11 +113,9 @@ class AudioEngine:
         """Scan for audio output devices"""
         if not HAS_PYAUDIO:
             return
-        
         try:
             pa = pyaudio.PyAudio()
             self.devices = []
-            
             for i in range(pa.get_device_count()):
                 info = pa.get_device_info_by_index(i)
                 if info['maxOutputChannels'] > 0:
@@ -111,7 +124,6 @@ class AudioEngine:
                         'name': info['name'],
                         'channels': info['maxOutputChannels'],
                     })
-            
             pa.terminate()
         except Exception as e:
             print(f"Error scanning devices: {e}")
@@ -123,16 +135,67 @@ class AudioEngine:
         if 0 <= idx < len(self.devices):
             self.selected_device = self.devices[idx]['index']
     
-    def set_parameters(self, freq_left: float, freq_right: float, 
-                       phase_angle_deg: float, amplitude: float, 
-                       waveform: str = "sine"):
-        """Update generation parameters (thread-safe)"""
+    # ══════════════════════════════════════════════════════════════════════════
+    # REAL-TIME PARAMETER SETTERS (call these while audio is playing!)
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def set_binaural_params(self, freq_left: float, freq_right: float, 
+                            phase_angle_deg: float, amplitude: float, 
+                            waveform: str = "sine"):
+        """Update binaural parameters in real-time (no glitches)"""
         with self.lock:
             self.freq_left = freq_left
             self.freq_right = freq_right
             self.phase_offset = np.radians(phase_angle_deg)
             self.amplitude = amplitude
             self.waveform_mode = waveform
+    
+    def set_frequencies(self, freq_left: float, freq_right: float):
+        """Update frequencies only"""
+        with self.lock:
+            self.freq_left = freq_left
+            self.freq_right = freq_right
+    
+    def set_phase_angle(self, angle_deg: float):
+        """Update phase angle only"""
+        with self.lock:
+            self.phase_offset = np.radians(angle_deg)
+    
+    def set_amplitude(self, amp: float):
+        """Update amplitude only"""
+        with self.lock:
+            self.amplitude = max(0.0, min(1.0, amp))
+    
+    def set_waveform(self, waveform: str):
+        """Update waveform mode"""
+        with self.lock:
+            self.waveform_mode = waveform
+    
+    def set_spectral_params(self, frequencies: list, amplitudes: list, 
+                            phases: list = None, positions: list = None):
+        """
+        Update spectral/molecular parameters in real-time.
+        
+        frequencies: list of Hz values
+        amplitudes: list of amplitude values [0,1]
+        phases: optional list of phase offsets (radians)
+        positions: optional list of stereo positions [-1, 1]
+        """
+        with self.lock:
+            self.spectral_frequencies = list(zip(
+                frequencies, 
+                amplitudes,
+                phases or [0.0] * len(frequencies)
+            ))
+            self.stereo_positions = positions or [0.0] * len(frequencies)
+            
+            # Initialize phase accumulators if needed
+            if len(self.spectral_phases) != len(frequencies):
+                self.spectral_phases = [0.0] * len(frequencies)
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # GOLDEN WAVE GENERATION
+    # ══════════════════════════════════════════════════════════════════════════
     
     def _golden_wave_sample(self, phase: float, reversed: bool = True) -> float:
         """Generate single golden wave sample"""
@@ -148,8 +211,12 @@ class AudioEngine:
         else:
             return np.cos(np.pi * (t - rise) / (1 - rise) / 2)
     
-    def _generate_chunk(self, frame_count: int) -> bytes:
-        """Generate audio chunk in real-time (called by callback)"""
+    # ══════════════════════════════════════════════════════════════════════════
+    # AUDIO GENERATION (callback)
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def _generate_binaural_chunk(self, frame_count: int) -> bytes:
+        """Generate binaural stereo chunk"""
         with self.lock:
             freq_l = self.freq_left
             freq_r = self.freq_right
@@ -157,15 +224,13 @@ class AudioEngine:
             amp = self.amplitude
             waveform = self.waveform_mode
         
-        # Pre-calculate phase increments
+        # Phase increments
         phase_inc_left = 2 * np.pi * freq_l / SAMPLE_RATE
         phase_inc_right = 2 * np.pi * freq_r / SAMPLE_RATE
         
-        # Generate samples
         output = np.empty(frame_count * 2, dtype=np.float32)
         
         for i in range(frame_count):
-            # Generate sample based on waveform type
             if waveform == "sine":
                 left_sample = amp * np.sin(self.phase_left)
                 right_sample = amp * np.sin(self.phase_right + phase_off)
@@ -176,15 +241,12 @@ class AudioEngine:
                 left_sample = amp * self._golden_wave_sample(self.phase_left, reversed=True)
                 right_sample = amp * self._golden_wave_sample(self.phase_right + phase_off, reversed=True)
             
-            # Interleave stereo (L, R, L, R, ...)
             output[i * 2] = left_sample
             output[i * 2 + 1] = right_sample
             
-            # Update phases (continuous)
             self.phase_left += phase_inc_left
             self.phase_right += phase_inc_right
             
-            # Keep phases in range to avoid precision issues
             if self.phase_left > 2 * np.pi:
                 self.phase_left -= 2 * np.pi
             if self.phase_right > 2 * np.pi:
@@ -192,40 +254,115 @@ class AudioEngine:
         
         return output.tobytes()
     
-    def start_continuous(self, freq_left: float, freq_right: float,
-                         phase_angle_deg: float, amplitude: float,
-                         waveform: str = "sine"):
-        """Start continuous callback-based playback"""
+    def _generate_spectral_chunk(self, frame_count: int) -> bytes:
+        """Generate spectral/molecular stereo chunk with multiple frequencies"""
+        with self.lock:
+            freq_data = list(self.spectral_frequencies)
+            positions = list(self.stereo_positions)
+            amp = self.amplitude
+        
+        if not freq_data:
+            # Silence if no frequencies
+            return np.zeros(frame_count * 2, dtype=np.float32).tobytes()
+        
+        output_left = np.zeros(frame_count, dtype=np.float32)
+        output_right = np.zeros(frame_count, dtype=np.float32)
+        
+        # Ensure we have enough phase accumulators
+        while len(self.spectral_phases) < len(freq_data):
+            self.spectral_phases.append(0.0)
+        
+        for idx, (freq, freq_amp, phase_off) in enumerate(freq_data):
+            phase_inc = 2 * np.pi * freq / SAMPLE_RATE
+            pan = positions[idx] if idx < len(positions) else 0.0
+            
+            # Pan law: equal power
+            left_gain = np.cos((pan + 1) * np.pi / 4)
+            right_gain = np.sin((pan + 1) * np.pi / 4)
+            
+            for i in range(frame_count):
+                sample = freq_amp * np.sin(self.spectral_phases[idx] + phase_off)
+                output_left[i] += sample * left_gain
+                output_right[i] += sample * right_gain
+                
+                self.spectral_phases[idx] += phase_inc
+                if self.spectral_phases[idx] > 2 * np.pi:
+                    self.spectral_phases[idx] -= 2 * np.pi
+        
+        # Normalize and apply master amplitude
+        max_val = max(np.max(np.abs(output_left)), np.max(np.abs(output_right)), 0.001)
+        if max_val > 1.0:
+            output_left /= max_val
+            output_right /= max_val
+        
+        output_left *= amp
+        output_right *= amp
+        
+        # Interleave
+        output = np.empty(frame_count * 2, dtype=np.float32)
+        output[0::2] = output_left
+        output[1::2] = output_right
+        
+        return output.tobytes()
+    
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """PyAudio callback - generates audio in real-time"""
+        if not self.playing:
+            return (None, pyaudio.paComplete)
+        
+        if self.mode == "binaural":
+            data = self._generate_binaural_chunk(frame_count)
+        else:  # spectral or molecular
+            data = self._generate_spectral_chunk(frame_count)
+        
+        return (data, pyaudio.paContinue)
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # START/STOP
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def start_binaural(self, freq_left: float, freq_right: float,
+                       phase_angle_deg: float, amplitude: float,
+                       waveform: str = "sine"):
+        """Start continuous binaural playback"""
+        self.stop()
+        
+        self.mode = "binaural"
+        self.set_binaural_params(freq_left, freq_right, phase_angle_deg, amplitude, waveform)
+        self.phase_left = 0.0
+        self.phase_right = 0.0
+        
+        self._start_stream()
+    
+    def start_spectral(self, frequencies: list, amplitudes: list,
+                       phases: list = None, positions: list = None,
+                       master_amplitude: float = 0.7):
+        """Start continuous spectral/molecular playback"""
+        self.stop()
+        
+        self.mode = "spectral"
+        self.amplitude = master_amplitude
+        self.set_spectral_params(frequencies, amplitudes, phases, positions)
+        self.spectral_phases = [0.0] * len(frequencies)
+        
+        self._start_stream()
+    
+    def _start_stream(self):
+        """Start the audio stream"""
         if not HAS_PYAUDIO:
             print("PyAudio not available")
             return
         
-        if self.playing:
-            self.stop()
-        
-        # Set parameters
-        self.set_parameters(freq_left, freq_right, phase_angle_deg, amplitude, waveform)
-        
-        # Reset phases
-        self.phase_left = 0.0
-        self.phase_right = 0.0
-        
         try:
             self.pyaudio_instance = pyaudio.PyAudio()
             
-            def audio_callback(in_data, frame_count, time_info, status):
-                if not self.playing:
-                    return (None, pyaudio.paComplete)
-                data = self._generate_chunk(frame_count)
-                return (data, pyaudio.paContinue)
-            
             stream_params = {
                 'format': pyaudio.paFloat32,
-                'channels': 2,  # STEREO
+                'channels': 2,
                 'rate': SAMPLE_RATE,
                 'output': True,
                 'frames_per_buffer': 1024,
-                'stream_callback': audio_callback
+                'stream_callback': self._audio_callback
             }
             
             if self.selected_device is not None:
@@ -234,7 +371,7 @@ class AudioEngine:
             self.stream = self.pyaudio_instance.open(**stream_params)
             self.playing = True
             
-            print(f"🔊 Audio started: L={freq_left:.1f}Hz R={freq_right:.1f}Hz Beat={abs(freq_right-freq_left):.2f}Hz")
+            print(f"🔊 Audio started ({self.mode} mode)")
             
         except Exception as e:
             print(f"Audio error: {e}")
@@ -259,82 +396,9 @@ class AudioEngine:
             except:
                 pass
             self.pyaudio_instance = None
-        
-        print("⏹ Audio stopped")
     
-    # === Legacy methods for Spectral/Molecular tabs (buffer-based) ===
-    
-    def play_mono(self, signal: np.ndarray, callback=None, loop: bool = False):
-        """Play pre-generated mono signal (for spectral/molecular)"""
-        if self.playing:
-            self.stop()
-        self._play_buffer(signal, None, 1, callback, loop)
-    
-    def play_stereo(self, left: np.ndarray, right: np.ndarray, callback=None, loop: bool = False):
-        """Play pre-generated stereo signal (for spectral/molecular)"""
-        if self.playing:
-            self.stop()
-        self._play_buffer(left, right, 2, callback, loop)
-    
-    def _play_buffer(self, left_or_mono: np.ndarray, right: Optional[np.ndarray], 
-                     channels: int, callback, loop: bool):
-        """Play pre-generated buffer"""
-        if not HAS_PYAUDIO:
-            return
-        
-        def playback_thread():
-            try:
-                pa = pyaudio.PyAudio()
-                
-                if channels == 2 and right is not None:
-                    stereo = np.empty(len(left_or_mono) * 2, dtype=np.float32)
-                    stereo[0::2] = left_or_mono.astype(np.float32)
-                    stereo[1::2] = right.astype(np.float32)
-                    data = stereo.tobytes()
-                else:
-                    data = left_or_mono.astype(np.float32).tobytes()
-                
-                stream_kwargs = {
-                    'format': pyaudio.paFloat32,
-                    'channels': channels,
-                    'rate': SAMPLE_RATE,
-                    'output': True,
-                }
-                
-                if self.selected_device is not None:
-                    stream_kwargs['output_device_index'] = self.selected_device
-                
-                stream = pa.open(**stream_kwargs)
-                self.playing = True
-                
-                chunk_size = 4096 * channels * 4
-                
-                while self.playing:
-                    position = 0
-                    while position < len(data) and self.playing:
-                        chunk = data[position:position + chunk_size]
-                        if chunk:
-                            stream.write(chunk)
-                        position += chunk_size
-                    
-                    if not loop:
-                        break
-                
-                stream.stop_stream()
-                stream.close()
-                pa.terminate()
-                
-            except Exception as e:
-                print(f"Audio error: {e}")
-            
-            finally:
-                self.playing = False
-                if callback:
-                    callback()
-        
-        thread = threading.Thread(target=playback_thread)
-        thread.daemon = True
-        thread.start()
+    def is_playing(self):
+        return self.playing
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -497,10 +561,14 @@ class BinauralTab:
         # Initial draw
         self._draw_phase_circle()
         
-        # Bind updates
-        self.phase_angle.trace_add('write', lambda *args: self._draw_phase_circle())
+        # Bind updates for visualization AND real-time audio
+        self.phase_angle.trace_add('write', self._on_phase_change)
         self.beat_freq.trace_add('write', lambda *args: self._update_frequencies())
         self.base_freq.trace_add('write', lambda *args: self._update_frequencies())
+        self.amplitude.trace_add('write', self._on_amplitude_change)
+        self.waveform.trace_add('write', self._on_waveform_change)
+        self.freq_left.trace_add('write', self._on_freq_change)
+        self.freq_right.trace_add('write', self._on_freq_change)
     
     def _set_beat_preset(self, beat: float):
         """Set beat frequency preset"""
@@ -508,12 +576,11 @@ class BinauralTab:
         self._update_frequencies()
     
     def _update_frequencies(self):
-        """Update L/R frequencies based on beat mode"""
+        """Update L/R frequencies based on beat mode - AND UPDATE AUDIO IN REAL-TIME"""
         try:
             if self.link_mode.get() == "beat":
                 base = self.base_freq.get()
                 beat = self.beat_freq.get()
-                # L = base, R = base + beat
                 self.freq_left.set(base)
                 self.freq_right.set(base + beat)
             
@@ -522,8 +589,56 @@ class BinauralTab:
             r = self.freq_right.get()
             b = abs(r - l)
             self.calc_label.config(text=f"L: {l:.1f} Hz | R: {r:.1f} Hz | Beat: {b:.2f} Hz")
+            
+            # === REAL-TIME UPDATE: if playing, update audio engine immediately ===
+            if self.audio.is_playing():
+                self.audio.set_frequencies(l, r)
+                
         except:
-            pass  # Ignore errors during slider updates
+            pass
+    
+    def _on_phase_change(self, *args):
+        """Called when phase angle changes - update audio in real-time"""
+        try:
+            phase = self.phase_angle.get()
+            self._draw_phase_circle()
+            
+            if self.audio.is_playing():
+                self.audio.set_phase_angle(phase)
+        except:
+            pass
+    
+    def _on_amplitude_change(self, *args):
+        """Called when amplitude changes - update audio in real-time"""
+        try:
+            amp = self.amplitude.get()
+            if self.audio.is_playing():
+                self.audio.set_amplitude(amp)
+        except:
+            pass
+    
+    def _on_waveform_change(self, *args):
+        """Called when waveform changes - update audio in real-time"""
+        try:
+            wf = self.waveform.get()
+            if self.audio.is_playing():
+                self.audio.set_waveform(wf)
+        except:
+            pass
+    
+    def _on_freq_change(self, *args):
+        """Called when manual frequencies change - update audio in real-time"""
+        try:
+            if self.link_mode.get() == "manual":
+                l = self.freq_left.get()
+                r = self.freq_right.get()
+                b = abs(r - l)
+                self.calc_label.config(text=f"L: {l:.1f} Hz | R: {r:.1f} Hz | Beat: {b:.2f} Hz")
+                
+                if self.audio.is_playing():
+                    self.audio.set_frequencies(l, r)
+        except:
+            pass
     
     def _draw_phase_circle(self):
         """Draw phase visualization"""
@@ -787,6 +902,11 @@ class SpectralTab:
         
         self.status_var = tk.StringVar(value="Select an element")
         ttk.Label(right_frame, textvariable=self.status_var).pack()
+        
+        # Bind parameter changes for real-time updates
+        self.phase_mode.trace_add('write', self._on_param_change)
+        self.output_mode.trace_add('write', self._on_param_change)
+        self.beat_freq.trace_add('write', self._on_param_change)
     
     def _select_element(self, element: str):
         """Select an element"""
@@ -855,40 +975,63 @@ class SpectralTab:
         self.info_text.config(state='disabled')
     
     def _play(self):
-        """Play element sound"""
+        """Play element sound - CONTINUOUS until STOP"""
         element = self.element.get()
         if not element:
             messagebox.showwarning("Warning", "Select an element first!")
             return
         
-        dur = self.duration.get()
-        phase_mode = PhaseMode[self.phase_mode.get()]
-        output = self.output_mode.get()
-        
         try:
+            # Get spectral lines
+            lines = self.sounder.get_spectral_lines(element)
+            if not lines:
+                messagebox.showerror("Error", f"No spectral lines for {element}")
+                return
+            
+            # Scale to audio frequencies
+            scaled = self.sounder.scale_to_audio(lines)
+            frequencies = [f for f, a in scaled]
+            amplitudes = [a for f, a in scaled]
+            
+            # Generate phases based on mode
+            phase_mode = PhaseMode[self.phase_mode.get()]
+            phases = list(self.sounder.generate_phases(len(lines), phase_mode))
+            
+            # Generate stereo positions based on output mode
+            output = self.output_mode.get()
             if output == "mono":
-                signal = self.sounder.generate_element_sound(element, dur, phase_mode)
-                self.audio.play_mono(signal, callback=self._on_done)
+                positions = [0.0] * len(frequencies)  # center
             elif output == "stereo":
-                left, right = self.sounder.generate_element_stereo(element, dur, phase_mode)
-                self.audio.play_stereo(left, right, callback=self._on_done)
-            else:  # binaural
-                left, right = self.sounder.generate_binaural_element(
-                    element, self.beat_freq.get(), dur, phase_mode)
-                self.audio.play_stereo(left, right, callback=self._on_done)
+                # Spread across stereo field based on frequency
+                positions = list(np.linspace(-0.8, 0.8, len(frequencies)))
+            else:  # binaural - create binaural effect
+                # Alternate left/right with beat frequency offset
+                positions = [(-1.0 if i % 2 == 0 else 1.0) for i in range(len(frequencies))]
+                # Add slight frequency shift for binaural beat on odd frequencies
+                beat = self.beat_freq.get()
+                frequencies = [f + (beat if i % 2 == 1 else 0) for i, f in enumerate(frequencies)]
+            
+            # Start continuous streaming
+            self.audio.start_spectral(frequencies, amplitudes, phases, positions, 
+                                      master_amplitude=0.7)
             
             self.play_btn.config(state='disabled')
             self.stop_btn.config(state='normal')
-            self.status_var.set("🔊 Playing...")
+            self.status_var.set("🔊 Playing continuously...")
             
         except Exception as e:
             messagebox.showerror("Error", str(e))
+            import traceback
+            traceback.print_exc()
     
     def _stop(self):
         self.audio.stop()
-        self._on_done()
+        self.play_btn.config(state='normal')
+        self.stop_btn.config(state='disabled')
+        self.status_var.set(f"✅ {self.element.get()}")
     
     def _on_done(self):
+        """Legacy callback - not used with continuous playback"""
         self.play_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.status_var.set(f"✅ {self.element.get()}")
@@ -907,6 +1050,42 @@ class SpectralTab:
             self.status_var.set(f"💾 Saved: {filename}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
+    
+    def _on_param_change(self, *args):
+        """Update audio parameters in real-time when sliders change"""
+        if not self.audio.is_playing():
+            return
+        
+        element = self.element.get()
+        if not element:
+            return
+        
+        try:
+            # Regenerate parameters for streaming audio
+            lines = self.sounder.get_spectral_lines(element)
+            if not lines:
+                return
+            
+            scaled = self.sounder.scale_to_audio(lines)
+            frequencies = [f for f, a in scaled]
+            amplitudes = [a for f, a in scaled]
+            
+            phase_mode = PhaseMode[self.phase_mode.get()]
+            phases = list(self.sounder.generate_phases(len(lines), phase_mode))
+            
+            output = self.output_mode.get()
+            if output == "mono":
+                positions = [0.0] * len(frequencies)
+            elif output == "stereo":
+                positions = list(np.linspace(-0.8, 0.8, len(frequencies)))
+            else:  # binaural
+                positions = [(-1.0 if i % 2 == 0 else 1.0) for i in range(len(frequencies))]
+                beat = self.beat_freq.get()
+                frequencies = [f + (beat if i % 2 == 1 else 0) for i, f in enumerate(frequencies)]
+            
+            self.audio.set_spectral_params(frequencies, amplitudes, phases, positions)
+        except:
+            pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1020,6 +1199,11 @@ class MolecularTab:
         
         self.status_var = tk.StringVar(value="Select a molecule")
         ttk.Label(right_frame, textvariable=self.status_var).pack()
+        
+        # Bind parameter changes for real-time updates
+        self.output_mode.trace_add('write', self._on_param_change)
+        self.beat_freq.trace_add('write', self._on_param_change)
+        self.use_spectral.trace_add('write', self._on_param_change)
     
     def _select_molecule(self, formula: str):
         """Select a molecule"""
@@ -1105,7 +1289,7 @@ class MolecularTab:
         self.info_text.config(state='disabled')
     
     def _play(self):
-        """Play molecule sound"""
+        """Play molecule sound - CONTINUOUS until STOP"""
         formula = self.molecule.get()
         if not formula:
             messagebox.showwarning("Warning", "Select a molecule first!")
@@ -1115,31 +1299,80 @@ class MolecularTab:
         if not mol:
             return
         
-        dur = self.duration.get()
         mode = self.output_mode.get()
         
         try:
-            if mode == "molecular":
-                left, right = self.sounder.generate_molecule_sound(
-                    mol, dur, use_spectral=self.use_spectral.get())
-            else:  # binaural
-                left, right = self.sounder.generate_molecule_binaural(
-                    mol, self.beat_freq.get(), dur)
+            # Extract frequencies, amplitudes, phases, and positions from molecule
+            frequencies = []
+            amplitudes = []
+            phases = []
+            positions = []
             
-            self.audio.play_stereo(left, right, callback=self._on_done)
+            # Calculate phase from bond angles
+            base_phases = []
+            if mol.bond_angles:
+                for angle in mol.bond_angles:
+                    base_phases.append(self.sounder.angle_to_phase(angle))
+            else:
+                base_phases = [0.0]
+            
+            total_mass = mol.total_mass
+            
+            # For each atom, create a frequency component
+            for i, atom in enumerate(mol.atoms):
+                # Frequency from bond length (if available)
+                if mol.bonds and i < len(mol.bonds):
+                    bond = mol.bonds[min(i, len(mol.bonds)-1)]
+                    freq = self.sounder.bond_length_to_frequency(bond.length)
+                else:
+                    freq = 200.0 + i * 50.0  # Default spread
+                
+                # Amplitude from electronegativity
+                amp = self.sounder.electronegativity_to_amplitude(atom.electronegativity)
+                
+                # Phase from bond angle + golden ratio offset
+                phase_idx = i % len(base_phases)
+                phase = base_phases[phase_idx] + (2 * np.pi * 0.618 * i)
+                
+                # Stereo position from mass
+                pan = self.sounder.mass_to_pan(atom.mass, total_mass)
+                position = (pan - 0.5) * 2  # Convert [0,1] to [-1, 1]
+                
+                frequencies.append(freq)
+                amplitudes.append(amp)
+                phases.append(phase)
+                positions.append(position)
+            
+            # If binaural mode, add beat frequency to some components
+            if mode == "binaural":
+                beat = self.beat_freq.get()
+                for i in range(1, len(frequencies), 2):
+                    frequencies[i] += beat
+                positions = [(-0.9 if i % 2 == 0 else 0.9) for i in range(len(frequencies))]
+            
+            # Start continuous streaming
+            self.audio.start_spectral(frequencies, amplitudes, phases, positions,
+                                      master_amplitude=0.7)
             
             self.play_btn.config(state='disabled')
             self.stop_btn.config(state='normal')
-            self.status_var.set("🔊 Playing...")
+            self.status_var.set("🔊 Playing continuously...")
             
         except Exception as e:
             messagebox.showerror("Error", str(e))
+            import traceback
+            traceback.print_exc()
     
     def _stop(self):
         self.audio.stop()
-        self._on_done()
+        self.play_btn.config(state='normal')
+        self.stop_btn.config(state='disabled')
+        mol = self.sounder.get_molecule(self.molecule.get())
+        if mol:
+            self.status_var.set(f"✅ {mol.name}")
     
     def _on_done(self):
+        """Legacy callback - not used with continuous playback"""
         self.play_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         mol = self.sounder.get_molecule(self.molecule.get())
@@ -1164,6 +1397,67 @@ class MolecularTab:
             self.status_var.set(f"💾 Saved: {filename}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
+    
+    def _on_param_change(self, *args):
+        """Update audio parameters in real-time when settings change"""
+        if not self.audio.is_playing():
+            return
+        
+        formula = self.molecule.get()
+        if not formula:
+            return
+        
+        mol = self.sounder.get_molecule(formula)
+        if not mol:
+            return
+        
+        mode = self.output_mode.get()
+        
+        try:
+            # Regenerate parameters for streaming audio
+            frequencies = []
+            amplitudes = []
+            phases = []
+            positions = []
+            
+            base_phases = []
+            if mol.bond_angles:
+                for angle in mol.bond_angles:
+                    base_phases.append(self.sounder.angle_to_phase(angle))
+            else:
+                base_phases = [0.0]
+            
+            total_mass = mol.total_mass
+            
+            for i, atom in enumerate(mol.atoms):
+                if mol.bonds and i < len(mol.bonds):
+                    bond = mol.bonds[min(i, len(mol.bonds)-1)]
+                    freq = self.sounder.bond_length_to_frequency(bond.length)
+                else:
+                    freq = 200.0 + i * 50.0
+                
+                amp = self.sounder.electronegativity_to_amplitude(atom.electronegativity)
+                
+                phase_idx = i % len(base_phases)
+                phase = base_phases[phase_idx] + (2 * np.pi * 0.618 * i)
+                
+                pan = self.sounder.mass_to_pan(atom.mass, total_mass)
+                position = (pan - 0.5) * 2
+                
+                frequencies.append(freq)
+                amplitudes.append(amp)
+                phases.append(phase)
+                positions.append(position)
+            
+            if mode == "binaural":
+                beat = self.beat_freq.get()
+                for i in range(1, len(frequencies), 2):
+                    frequencies[i] += beat
+                positions = [(-0.9 if i % 2 == 0 else 0.9) for i in range(len(frequencies))]
+            
+            self.audio.set_spectral_params(frequencies, amplitudes, phases, positions)
+        except:
+            pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
