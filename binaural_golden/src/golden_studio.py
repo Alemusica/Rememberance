@@ -1,0 +1,1045 @@
+#!/usr/bin/env python3
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    GOLDEN SOUND STUDIO - UNIFIED INTERFACE                   ║
+║                                                                              ║
+║   Three apps in one:                                                         ║
+║   🎵 TAB 1: Binaural Beats - Phase angle control, sacred geometry           ║
+║   ⚛️ TAB 2: Spectral Sound - Play atomic elements                           ║
+║   🧪 TAB 3: Molecular Sound - Play molecules with bond angles as phases     ║
+║                                                                              ║
+║   "The universe is made of vibrations - let's hear them"                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox
+import numpy as np
+import threading
+import subprocess
+import sys
+import os
+from typing import Optional, Tuple
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONSTANTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+PHI = 1.618033988749895
+PHI_CONJUGATE = 0.618033988749895
+SAMPLE_RATE = 44100
+
+SACRED_ANGLES = {
+    "Golden Angle (360°/φ²)": 360.0 / (PHI * PHI),
+    "Fine Structure (α⁻¹)": 137.035999084,
+    "DNA Helix (per base)": 34.3,
+    "Pentagon Internal": 108.0,
+    "Pyramid Giza Slope": 51.8392,
+    "Cancellation (180°)": 180.0,
+    "Quadrature (90°)": 90.0,
+    "Water H-O-H": 104.5,
+    "Methane (tetrahedral)": 109.5,
+    "Ammonia H-N-H": 107.3,
+}
+
+# PyAudio
+try:
+    import pyaudio
+    HAS_PYAUDIO = True
+except ImportError:
+    HAS_PYAUDIO = False
+
+# Import our modules
+try:
+    from spectral_sound import SpectralSounder, PhaseMode
+    HAS_SPECTRAL = True
+except ImportError:
+    HAS_SPECTRAL = False
+    print("⚠️ spectral_sound.py not found")
+
+try:
+    from molecular_sound import MolecularSounder, MOLECULES_DB
+    HAS_MOLECULAR = True
+except ImportError:
+    HAS_MOLECULAR = False
+    print("⚠️ molecular_sound.py not found")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUDIO ENGINE (shared)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AudioEngine:
+    """Shared audio engine for all tabs"""
+    
+    def __init__(self):
+        self.pyaudio: Optional[pyaudio.PyAudio] = None
+        self.stream = None
+        self.playing = False
+        self.current_signal: Optional[np.ndarray] = None
+        self.current_stereo: Optional[Tuple[np.ndarray, np.ndarray]] = None
+        self.playback_position = 0
+        self.lock = threading.Lock()
+        
+        # Scan devices
+        self.devices = []
+        self.selected_device = None
+        self._scan_devices()
+    
+    def _scan_devices(self):
+        """Scan for audio output devices"""
+        if not HAS_PYAUDIO:
+            return
+        
+        try:
+            pa = pyaudio.PyAudio()
+            self.devices = []
+            
+            for i in range(pa.get_device_count()):
+                info = pa.get_device_info_by_index(i)
+                if info['maxOutputChannels'] > 0:
+                    self.devices.append({
+                        'index': i,
+                        'name': info['name'],
+                        'channels': info['maxOutputChannels'],
+                    })
+            
+            pa.terminate()
+        except Exception as e:
+            print(f"Error scanning devices: {e}")
+    
+    def get_device_names(self):
+        return [d['name'] for d in self.devices]
+    
+    def set_device(self, idx: int):
+        if 0 <= idx < len(self.devices):
+            self.selected_device = self.devices[idx]['index']
+    
+    def play_mono(self, signal: np.ndarray, callback=None):
+        """Play mono signal"""
+        self.current_signal = signal
+        self.current_stereo = None
+        self._start_playback(1, callback)
+    
+    def play_stereo(self, left: np.ndarray, right: np.ndarray, callback=None):
+        """Play stereo signal"""
+        self.current_stereo = (left, right)
+        self.current_signal = None
+        self._start_playback(2, callback)
+    
+    def _start_playback(self, channels: int, callback=None):
+        """Start audio playback in thread"""
+        if not HAS_PYAUDIO:
+            return
+        
+        self.playing = True
+        self.playback_position = 0
+        
+        thread = threading.Thread(target=self._playback_thread, args=(channels, callback))
+        thread.daemon = True
+        thread.start()
+    
+    def _playback_thread(self, channels: int, callback):
+        """Audio playback thread"""
+        try:
+            self.pyaudio = pyaudio.PyAudio()
+            
+            if channels == 2 and self.current_stereo:
+                left, right = self.current_stereo
+                stereo = np.empty(len(left) * 2, dtype=np.float32)
+                stereo[0::2] = left.astype(np.float32)
+                stereo[1::2] = right.astype(np.float32)
+                data = stereo.tobytes()
+            else:
+                data = self.current_signal.astype(np.float32).tobytes()
+            
+            stream_kwargs = {
+                'format': pyaudio.paFloat32,
+                'channels': channels,
+                'rate': SAMPLE_RATE,
+                'output': True,
+            }
+            
+            if self.selected_device is not None:
+                stream_kwargs['output_device_index'] = self.selected_device
+            
+            self.stream = self.pyaudio.open(**stream_kwargs)
+            
+            chunk_size = 1024 * channels * 4
+            position = 0
+            
+            while position < len(data) and self.playing:
+                chunk = data[position:position + chunk_size]
+                if chunk:
+                    self.stream.write(chunk)
+                position += chunk_size
+            
+            self.stream.stop_stream()
+            self.stream.close()
+            self.pyaudio.terminate()
+            
+        except Exception as e:
+            print(f"Audio error: {e}")
+        
+        finally:
+            self.playing = False
+            if callback:
+                callback()
+    
+    def stop(self):
+        """Stop playback"""
+        self.playing = False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1: BINAURAL BEATS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BinauralTab:
+    """Binaural beats with phase angle control"""
+    
+    def __init__(self, parent, audio_engine: AudioEngine):
+        self.parent = parent
+        self.audio = audio_engine
+        self.frame = ttk.Frame(parent)
+        
+        # State
+        self.freq_left = tk.DoubleVar(value=432.0)
+        self.freq_right = tk.DoubleVar(value=440.0)
+        self.phase_angle = tk.DoubleVar(value=137.5)
+        self.amplitude = tk.DoubleVar(value=0.7)
+        self.duration = tk.DoubleVar(value=5.0)
+        self.waveform = tk.StringVar(value="golden_reversed")
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Build the UI"""
+        # Left panel - Controls
+        left_frame = ttk.LabelFrame(self.frame, text="🎛️ Controls", padding=10)
+        left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        
+        # Frequency controls
+        freq_frame = ttk.LabelFrame(left_frame, text="Frequencies", padding=5)
+        freq_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(freq_frame, text="Left (Hz):").grid(row=0, column=0, sticky='w')
+        ttk.Entry(freq_frame, textvariable=self.freq_left, width=10).grid(row=0, column=1)
+        ttk.Scale(freq_frame, from_=20, to=1000, variable=self.freq_left, 
+                  orient='horizontal', length=150).grid(row=0, column=2)
+        
+        ttk.Label(freq_frame, text="Right (Hz):").grid(row=1, column=0, sticky='w')
+        ttk.Entry(freq_frame, textvariable=self.freq_right, width=10).grid(row=1, column=1)
+        ttk.Scale(freq_frame, from_=20, to=1000, variable=self.freq_right,
+                  orient='horizontal', length=150).grid(row=1, column=2)
+        
+        # Beat frequency presets
+        beat_frame = ttk.LabelFrame(left_frame, text="Beat Frequency Presets", padding=5)
+        beat_frame.pack(fill='x', pady=5)
+        
+        beats = [("Delta 2Hz", 2), ("Theta 6Hz", 6), ("Alpha 10Hz", 10), 
+                 ("Beta 20Hz", 20), ("Gamma 40Hz", 40), ("Golden φ", 1.618)]
+        
+        for i, (name, beat) in enumerate(beats):
+            btn = ttk.Button(beat_frame, text=name, width=10,
+                           command=lambda b=beat: self._set_beat(b))
+            btn.grid(row=i//3, column=i%3, padx=2, pady=2)
+        
+        # Phase angle
+        phase_frame = ttk.LabelFrame(left_frame, text="Phase Angle", padding=5)
+        phase_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(phase_frame, text="Phase (°):").pack(side='left')
+        ttk.Entry(phase_frame, textvariable=self.phase_angle, width=10).pack(side='left')
+        ttk.Scale(phase_frame, from_=0, to=360, variable=self.phase_angle,
+                  orient='horizontal', length=200).pack(side='left', padx=5)
+        
+        # Sacred angle presets
+        sacred_frame = ttk.LabelFrame(left_frame, text="Sacred Angles", padding=5)
+        sacred_frame.pack(fill='x', pady=5)
+        
+        for i, (name, angle) in enumerate(SACRED_ANGLES.items()):
+            short_name = name.split('(')[0].strip()[:15]
+            btn = ttk.Button(sacred_frame, text=f"{short_name} ({angle:.1f}°)", width=20,
+                           command=lambda a=angle: self.phase_angle.set(a))
+            btn.grid(row=i//2, column=i%2, padx=2, pady=1)
+        
+        # Waveform
+        wave_frame = ttk.LabelFrame(left_frame, text="Waveform", padding=5)
+        wave_frame.pack(fill='x', pady=5)
+        
+        for wf in ["sine", "golden", "golden_reversed"]:
+            ttk.Radiobutton(wave_frame, text=wf, variable=self.waveform, 
+                          value=wf).pack(side='left', padx=10)
+        
+        # Duration & Amplitude
+        param_frame = ttk.Frame(left_frame)
+        param_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(param_frame, text="Duration (s):").pack(side='left')
+        ttk.Scale(param_frame, from_=1, to=30, variable=self.duration,
+                  orient='horizontal', length=100).pack(side='left')
+        
+        ttk.Label(param_frame, text="Amplitude:").pack(side='left', padx=(20, 0))
+        ttk.Scale(param_frame, from_=0, to=1, variable=self.amplitude,
+                  orient='horizontal', length=100).pack(side='left')
+        
+        # Playback buttons
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill='x', pady=10)
+        
+        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY", command=self._play)
+        self.play_btn.pack(side='left', padx=5)
+        
+        self.stop_btn = ttk.Button(btn_frame, text="⏹ STOP", command=self._stop, state='disabled')
+        self.stop_btn.pack(side='left', padx=5)
+        
+        ttk.Button(btn_frame, text="🌀 3D Scope", command=self._launch_3d).pack(side='left', padx=5)
+        
+        # Right panel - Visualization
+        right_frame = ttk.LabelFrame(self.frame, text="📊 Visualization", padding=10)
+        right_frame.pack(side='right', fill='both', expand=True, padx=5, pady=5)
+        
+        self.canvas = tk.Canvas(right_frame, width=300, height=300, bg='#0a0a15')
+        self.canvas.pack(pady=10)
+        
+        # Info label
+        self.info_var = tk.StringVar(value="Ready")
+        ttk.Label(right_frame, textvariable=self.info_var).pack()
+        
+        # Initial draw
+        self._draw_phase_circle()
+        
+        # Bind updates
+        self.phase_angle.trace_add('write', lambda *args: self._draw_phase_circle())
+    
+    def _set_beat(self, beat: float):
+        """Set beat frequency"""
+        base = self.freq_left.get()
+        self.freq_right.set(base + beat)
+    
+    def _draw_phase_circle(self):
+        """Draw phase visualization"""
+        self.canvas.delete('all')
+        
+        cx, cy, r = 150, 150, 120
+        phase = self.phase_angle.get()
+        
+        # Circle
+        self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline='#333', width=2)
+        
+        # Angle markers
+        for angle in [0, 90, 180, 270]:
+            rad = np.radians(angle - 90)
+            x, y = cx + r * np.cos(rad), cy + r * np.sin(rad)
+            self.canvas.create_text(x, y, text=f"{angle}°", fill='#666', font=('Courier', 8))
+        
+        # Left vector (reference)
+        self.canvas.create_line(cx, cy, cx, cy - r * 0.8, fill='#ff6b6b', width=3, arrow='last')
+        self.canvas.create_text(cx, cy - r - 10, text="L", fill='#ff6b6b', font=('Helvetica', 10, 'bold'))
+        
+        # Right vector (phase shifted)
+        rad = np.radians(phase - 90)
+        rx, ry = cx + r * 0.8 * np.cos(rad), cy + r * 0.8 * np.sin(rad)
+        self.canvas.create_line(cx, cy, rx, ry, fill='#4ecdc4', width=3, arrow='last')
+        self.canvas.create_text(rx + 15 * np.cos(rad), ry + 15 * np.sin(rad), 
+                               text="R", fill='#4ecdc4', font=('Helvetica', 10, 'bold'))
+        
+        # Phase arc
+        self.canvas.create_arc(cx-40, cy-40, cx+40, cy+40, 
+                              start=90, extent=-phase, outline='#ffd700', width=2, style='arc')
+        
+        # Phase value
+        self.canvas.create_text(cx, cy + r + 20, text=f"Phase: {phase:.2f}°", 
+                               fill='#ffd700', font=('Courier', 10, 'bold'))
+    
+    def _generate_binaural(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Generate binaural beat signal"""
+        freq_l = self.freq_left.get()
+        freq_r = self.freq_right.get()
+        phase = np.radians(self.phase_angle.get())
+        amp = self.amplitude.get()
+        dur = self.duration.get()
+        wf = self.waveform.get()
+        
+        num_samples = int(SAMPLE_RATE * dur)
+        t = np.linspace(0, dur, num_samples, endpoint=False)
+        
+        # Generate waveforms
+        if wf == "sine":
+            left = amp * np.sin(2 * np.pi * freq_l * t)
+            right = amp * np.sin(2 * np.pi * freq_r * t + phase)
+        else:
+            # Golden wave
+            left = amp * self._golden_wave(2 * np.pi * freq_l * t, reversed=(wf == "golden_reversed"))
+            right = amp * self._golden_wave(2 * np.pi * freq_r * t + phase, reversed=(wf == "golden_reversed"))
+        
+        # Apply envelope
+        env = self._golden_envelope(num_samples)
+        return left * env, right * env
+    
+    def _golden_wave(self, phase: np.ndarray, reversed: bool = True) -> np.ndarray:
+        """Generate PHI-based waveform"""
+        theta = phase % (2 * np.pi)
+        if reversed:
+            theta = 2 * np.pi - theta
+        
+        t = theta / (2 * np.pi)
+        rise = PHI_CONJUGATE
+        
+        wave = np.zeros_like(t)
+        rising = t < rise
+        wave = np.where(rising, np.sin(np.pi * t / rise / 2), 0)
+        wave = np.where(~rising, np.cos(np.pi * (t - rise) / (1 - rise) / 2), wave)
+        
+        return wave
+    
+    def _golden_envelope(self, length: int) -> np.ndarray:
+        """Golden ratio envelope"""
+        attack = int(length * PHI_CONJUGATE * PHI_CONJUGATE * 0.1)
+        release = int(length * PHI_CONJUGATE * 0.2)
+        
+        env = np.ones(length)
+        
+        for i in range(attack):
+            env[i] = (1 - np.cos(np.pi * i / attack)) / 2
+        
+        for i in range(release):
+            env[length - 1 - i] = (1 - np.cos(np.pi * i / release)) / 2
+        
+        return env
+    
+    def _play(self):
+        """Start playback"""
+        left, right = self._generate_binaural()
+        
+        self.play_btn.config(state='disabled')
+        self.stop_btn.config(state='normal')
+        self.info_var.set("🔊 Playing...")
+        
+        self.audio.play_stereo(left, right, callback=self._on_playback_done)
+    
+    def _stop(self):
+        """Stop playback"""
+        self.audio.stop()
+        self._on_playback_done()
+    
+    def _on_playback_done(self):
+        """Callback when playback ends"""
+        self.play_btn.config(state='normal')
+        self.stop_btn.config(state='disabled')
+        self.info_var.set("Ready")
+    
+    def _launch_3d(self):
+        """Launch 3D oscilloscope"""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        scope_script = os.path.join(script_dir, 'oscilloscope_3d.py')
+        
+        cmd = [
+            sys.executable, scope_script,
+            '--freq-left', str(self.freq_left.get()),
+            '--freq-right', str(self.freq_right.get()),
+            '--phase', str(self.phase_angle.get()),
+            '--amplitude', str(self.amplitude.get()),
+            '--waveform', self.waveform.get()
+        ]
+        
+        try:
+            subprocess.Popen(cmd)
+            self.info_var.set("🌀 3D Scope launched")
+        except Exception as e:
+            self.info_var.set(f"Error: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2: SPECTRAL SOUND (Elements)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SpectralTab:
+    """Play atomic elements as sound"""
+    
+    def __init__(self, parent, audio_engine: AudioEngine):
+        self.parent = parent
+        self.audio = audio_engine
+        self.frame = ttk.Frame(parent)
+        
+        if HAS_SPECTRAL:
+            self.sounder = SpectralSounder()
+        else:
+            self.sounder = None
+        
+        # State
+        self.element = tk.StringVar()
+        self.duration = tk.DoubleVar(value=3.0)
+        self.phase_mode = tk.StringVar(value="GOLDEN")
+        self.output_mode = tk.StringVar(value="stereo")
+        self.beat_freq = tk.DoubleVar(value=7.83)
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Build the UI"""
+        if not HAS_SPECTRAL:
+            ttk.Label(self.frame, text="⚠️ spectral_sound.py not found").pack(pady=50)
+            return
+        
+        # Left panel
+        left_frame = ttk.LabelFrame(self.frame, text="⚛️ Element Selection", padding=10)
+        left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        
+        # Element dropdown
+        elements = self.sounder.get_element_names()
+        ttk.Label(left_frame, text="Select Element:").pack(anchor='w')
+        combo = ttk.Combobox(left_frame, textvariable=self.element, values=elements, 
+                            state='readonly', width=30)
+        combo.pack(fill='x', pady=5)
+        combo.bind('<<ComboboxSelected>>', self._on_element_select)
+        
+        # Quick presets
+        preset_frame = ttk.LabelFrame(left_frame, text="Quick Presets", padding=5)
+        preset_frame.pack(fill='x', pady=5)
+        
+        presets = [
+            ("🔴 Hydrogen", "Hydrogen-Balmer"),
+            ("🟡 Helium", "Helium"),
+            ("🟠 Sodium", "Sodium"),
+            ("🔵 Neon", "Neon"),
+            ("⚪ Mercury", "Mercury"),
+            ("🟢 Oxygen", "Oxygen"),
+        ]
+        
+        for i, (label, elem) in enumerate(presets):
+            btn = ttk.Button(preset_frame, text=label, width=12,
+                           command=lambda e=elem: self._select_element(e))
+            btn.grid(row=i//3, column=i%3, padx=2, pady=2)
+        
+        # Parameters
+        param_frame = ttk.LabelFrame(left_frame, text="Parameters", padding=5)
+        param_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(param_frame, text="Duration (s):").grid(row=0, column=0, sticky='w')
+        ttk.Scale(param_frame, from_=1, to=10, variable=self.duration,
+                  orient='horizontal', length=150).grid(row=0, column=1)
+        
+        ttk.Label(param_frame, text="Phase Mode:").grid(row=1, column=0, sticky='w')
+        for i, mode in enumerate(["INCOHERENT", "COHERENT", "GOLDEN", "FIBONACCI"]):
+            ttk.Radiobutton(param_frame, text=mode, variable=self.phase_mode,
+                          value=mode).grid(row=2+i//2, column=i%2, sticky='w')
+        
+        ttk.Label(param_frame, text="Output:").grid(row=4, column=0, sticky='w')
+        for i, mode in enumerate(["mono", "stereo", "binaural"]):
+            ttk.Radiobutton(param_frame, text=mode, variable=self.output_mode,
+                          value=mode).grid(row=4, column=i+1, sticky='w')
+        
+        ttk.Label(param_frame, text="Beat Freq (Hz):").grid(row=5, column=0, sticky='w')
+        ttk.Scale(param_frame, from_=1, to=40, variable=self.beat_freq,
+                  orient='horizontal', length=150).grid(row=5, column=1, columnspan=2)
+        
+        # Buttons
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill='x', pady=10)
+        
+        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY", command=self._play)
+        self.play_btn.pack(side='left', padx=5)
+        
+        self.stop_btn = ttk.Button(btn_frame, text="⏹ STOP", command=self._stop, state='disabled')
+        self.stop_btn.pack(side='left', padx=5)
+        
+        ttk.Button(btn_frame, text="💾 SAVE", command=self._save).pack(side='left', padx=5)
+        
+        # Right panel - Spectrum
+        right_frame = ttk.LabelFrame(self.frame, text="📊 Spectrum", padding=10)
+        right_frame.pack(side='right', fill='both', expand=True, padx=5, pady=5)
+        
+        self.canvas = tk.Canvas(right_frame, width=350, height=250, bg='#0a0a15')
+        self.canvas.pack(pady=10)
+        
+        # Info text
+        self.info_text = tk.Text(right_frame, width=40, height=10, bg='#0a0a15', 
+                                 fg='#00ff88', font=('Courier', 9), state='disabled')
+        self.info_text.pack(fill='both', expand=True)
+        
+        self.status_var = tk.StringVar(value="Select an element")
+        ttk.Label(right_frame, textvariable=self.status_var).pack()
+    
+    def _select_element(self, element: str):
+        """Select an element"""
+        self.element.set(element)
+        self._on_element_select(None)
+    
+    def _on_element_select(self, event):
+        """Handle element selection"""
+        element = self.element.get()
+        if element and self.sounder:
+            self._draw_spectrum(element)
+            self._update_info(element)
+            self.status_var.set(f"✅ {element}")
+    
+    def _draw_spectrum(self, element: str):
+        """Draw element spectrum"""
+        self.canvas.delete('all')
+        
+        lines = self.sounder.get_spectral_lines(element)
+        if not lines:
+            return
+        
+        scaled = self.sounder.scale_to_audio(lines)
+        
+        # Axes
+        self.canvas.create_line(30, 220, 330, 220, fill='#333', width=2)
+        self.canvas.create_line(30, 220, 30, 20, fill='#333', width=2)
+        
+        # Bars
+        bar_width = 280 / max(len(lines), 1)
+        colors = ['#ff6b6b', '#ffd700', '#00ff88', '#4ecdc4', '#ff00ff', '#00bfff', '#ff8c00']
+        
+        for i, ((freq, amp), line) in enumerate(zip(scaled, lines)):
+            x = 40 + i * bar_width + bar_width/2
+            height = amp * 180
+            color = colors[i % len(colors)]
+            
+            self.canvas.create_rectangle(x - bar_width/3, 220 - height,
+                                        x + bar_width/3, 220, fill=color)
+            self.canvas.create_text(x, 230, text=f"{int(freq)}", fill='#666', font=('Courier', 7))
+        
+        self.canvas.create_text(180, 10, text=f"{element}", fill='#ffd700', 
+                               font=('Helvetica', 11, 'bold'))
+    
+    def _update_info(self, element: str):
+        """Update info panel"""
+        self.info_text.config(state='normal')
+        self.info_text.delete('1.0', tk.END)
+        
+        lines = self.sounder.get_spectral_lines(element)
+        if not lines:
+            self.info_text.insert('end', "No data")
+            self.info_text.config(state='disabled')
+            return
+        
+        scaled = self.sounder.scale_to_audio(lines)
+        
+        self.info_text.insert('end', f"═══ {element} ═══\n\n")
+        self.info_text.insert('end', f"{'Line':<8} {'λ(nm)':<8} {'f(Hz)':<8} {'Amp':<6}\n")
+        self.info_text.insert('end', "─" * 32 + "\n")
+        
+        for line, (f_audio, amp) in zip(lines, scaled):
+            self.info_text.insert('end', 
+                f"{line.name[:7]:<8} {line.wavelength_nm:<8.1f} {f_audio:<8.0f} {amp:<6.2f}\n")
+        
+        self.info_text.config(state='disabled')
+    
+    def _play(self):
+        """Play element sound"""
+        element = self.element.get()
+        if not element:
+            messagebox.showwarning("Warning", "Select an element first!")
+            return
+        
+        dur = self.duration.get()
+        phase_mode = PhaseMode[self.phase_mode.get()]
+        output = self.output_mode.get()
+        
+        try:
+            if output == "mono":
+                signal = self.sounder.generate_element_sound(element, dur, phase_mode)
+                self.audio.play_mono(signal, callback=self._on_done)
+            elif output == "stereo":
+                left, right = self.sounder.generate_element_stereo(element, dur, phase_mode)
+                self.audio.play_stereo(left, right, callback=self._on_done)
+            else:  # binaural
+                left, right = self.sounder.generate_binaural_element(
+                    element, self.beat_freq.get(), dur, phase_mode)
+                self.audio.play_stereo(left, right, callback=self._on_done)
+            
+            self.play_btn.config(state='disabled')
+            self.stop_btn.config(state='normal')
+            self.status_var.set("🔊 Playing...")
+            
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+    
+    def _stop(self):
+        self.audio.stop()
+        self._on_done()
+    
+    def _on_done(self):
+        self.play_btn.config(state='normal')
+        self.stop_btn.config(state='disabled')
+        self.status_var.set(f"✅ {self.element.get()}")
+    
+    def _save(self):
+        """Save to WAV"""
+        element = self.element.get()
+        if not element:
+            return
+        
+        filename = f"{element.lower().replace('-', '_')}.wav"
+        try:
+            left, right = self.sounder.generate_element_stereo(
+                element, self.duration.get(), PhaseMode[self.phase_mode.get()])
+            self.sounder.save_wav(left, filename, stereo=True, right_channel=right)
+            self.status_var.set(f"💾 Saved: {filename}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3: MOLECULAR SOUND
+# ══════════════════════════════════════════════════════════════════════════════
+
+class MolecularTab:
+    """Play molecules with bond angles as phases"""
+    
+    def __init__(self, parent, audio_engine: AudioEngine):
+        self.parent = parent
+        self.audio = audio_engine
+        self.frame = ttk.Frame(parent)
+        
+        if HAS_MOLECULAR:
+            self.sounder = MolecularSounder()
+        else:
+            self.sounder = None
+        
+        # State
+        self.molecule = tk.StringVar()
+        self.duration = tk.DoubleVar(value=4.0)
+        self.output_mode = tk.StringVar(value="molecular")
+        self.beat_freq = tk.DoubleVar(value=7.83)
+        self.use_spectral = tk.BooleanVar(value=True)
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Build the UI"""
+        if not HAS_MOLECULAR:
+            ttk.Label(self.frame, text="⚠️ molecular_sound.py not found").pack(pady=50)
+            return
+        
+        # Left panel
+        left_frame = ttk.LabelFrame(self.frame, text="🧪 Molecule Selection", padding=10)
+        left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        
+        # Molecule dropdown
+        molecules = self.sounder.get_available_molecules()
+        ttk.Label(left_frame, text="Select Molecule:").pack(anchor='w')
+        combo = ttk.Combobox(left_frame, textvariable=self.molecule, values=molecules,
+                            state='readonly', width=20)
+        combo.pack(fill='x', pady=5)
+        combo.bind('<<ComboboxSelected>>', self._on_molecule_select)
+        
+        # Quick presets with descriptions
+        preset_frame = ttk.LabelFrame(left_frame, text="Molecules", padding=5)
+        preset_frame.pack(fill='x', pady=5)
+        
+        presets = [
+            ("💧 H₂O", "H2O", "Water (104.5°)"),
+            ("☁️ CO₂", "CO2", "CO₂ (180°)"),
+            ("🔥 CH₄", "CH4", "Methane (109.5°)"),
+            ("💨 NH₃", "NH3", "Ammonia (107.3°)"),
+            ("🌀 O₃", "O3", "Ozone (116.8°)"),
+            ("💀 H₂S", "H2S", "H₂S (92.1°)"),
+            ("🏭 SO₂", "SO2", "SO₂ (119°)"),
+            ("🏙️ NO₂", "NO2", "NO₂ (134°)"),
+        ]
+        
+        for i, (icon, formula, desc) in enumerate(presets):
+            btn = ttk.Button(preset_frame, text=f"{icon} {formula}", width=12,
+                           command=lambda f=formula: self._select_molecule(f))
+            btn.grid(row=i//2, column=i%2, padx=2, pady=2)
+        
+        # Parameters
+        param_frame = ttk.LabelFrame(left_frame, text="Parameters", padding=5)
+        param_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(param_frame, text="Duration (s):").grid(row=0, column=0, sticky='w')
+        ttk.Scale(param_frame, from_=1, to=10, variable=self.duration,
+                  orient='horizontal', length=150).grid(row=0, column=1)
+        
+        ttk.Label(param_frame, text="Output Mode:").grid(row=1, column=0, sticky='w')
+        ttk.Radiobutton(param_frame, text="Molecular", variable=self.output_mode,
+                       value="molecular").grid(row=2, column=0, sticky='w')
+        ttk.Radiobutton(param_frame, text="Binaural", variable=self.output_mode,
+                       value="binaural").grid(row=2, column=1, sticky='w')
+        
+        ttk.Label(param_frame, text="Beat Freq (Hz):").grid(row=3, column=0, sticky='w')
+        ttk.Scale(param_frame, from_=1, to=40, variable=self.beat_freq,
+                  orient='horizontal', length=150).grid(row=3, column=1)
+        
+        ttk.Checkbutton(param_frame, text="Use real spectral lines", 
+                       variable=self.use_spectral).grid(row=4, column=0, columnspan=2, sticky='w')
+        
+        # Buttons
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill='x', pady=10)
+        
+        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY", command=self._play)
+        self.play_btn.pack(side='left', padx=5)
+        
+        self.stop_btn = ttk.Button(btn_frame, text="⏹ STOP", command=self._stop, state='disabled')
+        self.stop_btn.pack(side='left', padx=5)
+        
+        ttk.Button(btn_frame, text="💾 SAVE", command=self._save).pack(side='left', padx=5)
+        
+        # Right panel - Visualization
+        right_frame = ttk.LabelFrame(self.frame, text="🔬 Molecular Structure", padding=10)
+        right_frame.pack(side='right', fill='both', expand=True, padx=5, pady=5)
+        
+        self.canvas = tk.Canvas(right_frame, width=350, height=250, bg='#0a0a15')
+        self.canvas.pack(pady=10)
+        
+        # Info text
+        self.info_text = tk.Text(right_frame, width=40, height=12, bg='#0a0a15',
+                                fg='#00ff88', font=('Courier', 9), state='disabled')
+        self.info_text.pack(fill='both', expand=True)
+        
+        self.status_var = tk.StringVar(value="Select a molecule")
+        ttk.Label(right_frame, textvariable=self.status_var).pack()
+    
+    def _select_molecule(self, formula: str):
+        """Select a molecule"""
+        self.molecule.set(formula)
+        self._on_molecule_select(None)
+    
+    def _on_molecule_select(self, event):
+        """Handle molecule selection"""
+        formula = self.molecule.get()
+        if formula and self.sounder:
+            mol = self.sounder.get_molecule(formula)
+            if mol:
+                self._draw_molecule(mol)
+                self._update_info(mol)
+                self.status_var.set(f"✅ {mol.name}")
+    
+    def _draw_molecule(self, mol):
+        """Draw molecule structure"""
+        self.canvas.delete('all')
+        
+        cx, cy = 175, 125
+        scale = 80
+        
+        # Draw bonds
+        for bond in mol.bonds:
+            a1 = mol.atoms[bond.atom1_idx]
+            a2 = mol.atoms[bond.atom2_idx]
+            
+            x1 = cx + a1.position[0] * scale
+            y1 = cy - a1.position[1] * scale
+            x2 = cx + a2.position[0] * scale
+            y2 = cy - a2.position[1] * scale
+            
+            # Multiple lines for double/triple bonds
+            for offset in range(bond.order):
+                dy = (offset - (bond.order-1)/2) * 3
+                self.canvas.create_line(x1, y1+dy, x2, y2+dy, fill='#666', width=2)
+        
+        # Draw atoms
+        colors = {
+            'H': '#ffffff', 'O': '#ff4444', 'C': '#333333', 'N': '#4444ff',
+            'S': '#ffff00', 'Cl': '#44ff44', 'F': '#88ff88'
+        }
+        
+        for atom in mol.atoms:
+            x = cx + atom.position[0] * scale
+            y = cy - atom.position[1] * scale
+            r = 15 if atom.symbol != 'H' else 10
+            
+            color = colors.get(atom.symbol, '#888888')
+            self.canvas.create_oval(x-r, y-r, x+r, y+r, fill=color, outline='white')
+            self.canvas.create_text(x, y, text=atom.symbol, fill='white' if atom.symbol not in ['H', 'S'] else 'black',
+                                   font=('Helvetica', 10, 'bold'))
+        
+        # Draw angle arc if available
+        if mol.bond_angles:
+            angle = mol.bond_angles[0]
+            self.canvas.create_text(cx, 230, text=f"Bond Angle: {angle}° → Phase: {np.radians(angle):.3f} rad",
+                                   fill='#ffd700', font=('Courier', 10))
+        
+        self.canvas.create_text(175, 15, text=f"{mol.name} ({mol.formula})",
+                               fill='#ffd700', font=('Helvetica', 12, 'bold'))
+    
+    def _update_info(self, mol):
+        """Update info panel"""
+        self.info_text.config(state='normal')
+        self.info_text.delete('1.0', tk.END)
+        
+        self.info_text.insert('end', f"═══ {mol.name} ({mol.formula}) ═══\n\n")
+        self.info_text.insert('end', f"Symmetry: {mol.symmetry}\n")
+        self.info_text.insert('end', f"Dipole: {mol.dipole_moment:.2f} D\n\n")
+        
+        self.info_text.insert('end', "ATOMS:\n")
+        for atom in mol.atoms:
+            self.info_text.insert('end', 
+                f"  {atom.symbol}: mass={atom.mass:.3f}, χ={atom.electronegativity:.2f}\n")
+        
+        self.info_text.insert('end', "\nBOND ANGLES → PHASES:\n")
+        for i, angle in enumerate(mol.bond_angles):
+            phase = np.radians(angle)
+            self.info_text.insert('end', f"  Angle {i+1}: {angle:>7.2f}° → {phase:.4f} rad\n")
+        
+        self.info_text.config(state='disabled')
+    
+    def _play(self):
+        """Play molecule sound"""
+        formula = self.molecule.get()
+        if not formula:
+            messagebox.showwarning("Warning", "Select a molecule first!")
+            return
+        
+        mol = self.sounder.get_molecule(formula)
+        if not mol:
+            return
+        
+        dur = self.duration.get()
+        mode = self.output_mode.get()
+        
+        try:
+            if mode == "molecular":
+                left, right = self.sounder.generate_molecule_sound(
+                    mol, dur, use_spectral=self.use_spectral.get())
+            else:  # binaural
+                left, right = self.sounder.generate_molecule_binaural(
+                    mol, self.beat_freq.get(), dur)
+            
+            self.audio.play_stereo(left, right, callback=self._on_done)
+            
+            self.play_btn.config(state='disabled')
+            self.stop_btn.config(state='normal')
+            self.status_var.set("🔊 Playing...")
+            
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+    
+    def _stop(self):
+        self.audio.stop()
+        self._on_done()
+    
+    def _on_done(self):
+        self.play_btn.config(state='normal')
+        self.stop_btn.config(state='disabled')
+        mol = self.sounder.get_molecule(self.molecule.get())
+        if mol:
+            self.status_var.set(f"✅ {mol.name}")
+    
+    def _save(self):
+        """Save to WAV"""
+        formula = self.molecule.get()
+        if not formula:
+            return
+        
+        mol = self.sounder.get_molecule(formula)
+        if not mol:
+            return
+        
+        filename = f"{formula.lower()}_molecular.wav"
+        try:
+            left, right = self.sounder.generate_molecule_sound(
+                mol, self.duration.get(), use_spectral=self.use_spectral.get())
+            self.sounder.save_wav(left, right, filename)
+            self.status_var.set(f"💾 Saved: {filename}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN APPLICATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+class GoldenSoundStudio:
+    """Main application with tabbed interface"""
+    
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("🌀 GOLDEN SOUND STUDIO")
+        self.root.geometry("950x700")
+        
+        # Shared audio engine
+        self.audio = AudioEngine()
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Build the main UI"""
+        # Header
+        header = tk.Frame(self.root, bg='#1a1a2e')
+        header.pack(fill='x')
+        
+        title = tk.Label(header, text="🌀 GOLDEN SOUND STUDIO 🌀",
+                        font=('Helvetica', 20, 'bold'), fg='#ffd700', bg='#1a1a2e')
+        title.pack(pady=10)
+        
+        subtitle = tk.Label(header, 
+                           text="Binaural Beats • Atomic Spectra • Molecular Geometry",
+                           font=('Helvetica', 11), fg='#888', bg='#1a1a2e')
+        subtitle.pack()
+        
+        # Audio device selector
+        device_frame = tk.Frame(header, bg='#1a1a2e')
+        device_frame.pack(fill='x', padx=20, pady=5)
+        
+        tk.Label(device_frame, text="Audio Device:", fg='#888', bg='#1a1a2e',
+                font=('Courier', 9)).pack(side='left')
+        
+        devices = self.audio.get_device_names()
+        self.device_var = tk.StringVar(value=devices[0] if devices else "Default")
+        device_combo = ttk.Combobox(device_frame, textvariable=self.device_var,
+                                   values=devices, state='readonly', width=40)
+        device_combo.pack(side='left', padx=10)
+        device_combo.bind('<<ComboboxSelected>>', self._on_device_change)
+        
+        # Notebook (tabs)
+        style = ttk.Style()
+        style.configure('TNotebook.Tab', font=('Helvetica', 11, 'bold'), padding=[20, 10])
+        
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Create tabs
+        self.binaural_tab = BinauralTab(self.notebook, self.audio)
+        self.spectral_tab = SpectralTab(self.notebook, self.audio)
+        self.molecular_tab = MolecularTab(self.notebook, self.audio)
+        
+        self.notebook.add(self.binaural_tab.frame, text="🎵 Binaural Beats")
+        self.notebook.add(self.spectral_tab.frame, text="⚛️ Spectral Sound")
+        self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
+        
+        # Status bar
+        status_frame = tk.Frame(self.root, bg='#1a1a2e')
+        status_frame.pack(fill='x')
+        
+        self.status = tk.Label(status_frame, text="Ready", font=('Courier', 9),
+                              fg='#00ff88', bg='#1a1a2e')
+        self.status.pack(pady=5)
+        
+        # Bindings
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+    
+    def _on_device_change(self, event):
+        """Handle device selection change"""
+        idx = self.audio.get_device_names().index(self.device_var.get())
+        self.audio.set_device(idx)
+    
+    def _on_close(self):
+        """Handle window close"""
+        self.audio.stop()
+        self.root.destroy()
+    
+    def run(self):
+        """Run the application"""
+        print("""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    GOLDEN SOUND STUDIO                                       ║
+║                                                                              ║
+║   🎵 Tab 1: Binaural Beats - Phase angle control, sacred geometry           ║
+║   ⚛️ Tab 2: Spectral Sound - Play atomic elements (H, He, O, Na...)         ║
+║   🧪 Tab 3: Molecular Sound - Play molecules (H₂O, CO₂, CH₄...)             ║
+║                                                                              ║
+║   Bond angles become phase differences!                                      ║
+║   Water (104.5°), Methane (109.5°), Ammonia (107.3°)...                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+        """)
+        self.root.mainloop()
+
+
+if __name__ == "__main__":
+    app = GoldenSoundStudio()
+    app.run()
