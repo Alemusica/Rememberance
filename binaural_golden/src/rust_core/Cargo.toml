@@ -1,0 +1,28 @@
+[package]
+name = "golden_binaural_core"
+version = "1.0.0"
+edition = "2021"
+authors = ["Divine Mathematics"]
+description = "High-precision Golden Ratio Binaural Beat Generator with Phase Cancellation Annealing"
+license = "MIT"
+
+[lib]
+name = "golden_binaural_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.20", features = ["extension-module"] }
+
+# High precision numerics
+num-traits = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
