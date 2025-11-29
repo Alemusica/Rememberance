@@ -91,6 +91,7 @@ class AudioEngine:
         self.phase_offset = np.radians(137.5)  # Phase angle in radians
         self.amplitude = 0.7
         self.waveform_mode = "sine"
+        self.mono_mix = False  # If True, outputs (L+R)/2 to both channels (TEST mode)
         
         # Phase accumulators (continuous across callbacks)
         self.phase_left = 0.0
@@ -171,6 +172,11 @@ class AudioEngine:
         with self.lock:
             self.waveform_mode = waveform
     
+    def set_mono_mix(self, enabled: bool):
+        """Enable/disable mono mix mode (for phase cancellation testing)"""
+        with self.lock:
+            self.mono_mix = enabled
+    
     def set_spectral_params(self, frequencies: list, amplitudes: list, 
                             phases: list = None, positions: list = None):
         """
@@ -223,6 +229,7 @@ class AudioEngine:
             phase_off = self.phase_offset
             amp = self.amplitude
             waveform = self.waveform_mode
+            mono = self.mono_mix
         
         # Phase increments
         phase_inc_left = 2 * np.pi * freq_l / SAMPLE_RATE
@@ -241,8 +248,15 @@ class AudioEngine:
                 left_sample = amp * self._golden_wave_sample(self.phase_left, reversed=True)
                 right_sample = amp * self._golden_wave_sample(self.phase_right + phase_off, reversed=True)
             
-            output[i * 2] = left_sample
-            output[i * 2 + 1] = right_sample
+            # MONO MIX: Sum L+R and output to both channels
+            # At 180° phase with same frequency, this should be SILENCE!
+            if mono:
+                mono_sample = (left_sample + right_sample) / 2.0
+                output[i * 2] = mono_sample
+                output[i * 2 + 1] = mono_sample
+            else:
+                output[i * 2] = left_sample
+                output[i * 2 + 1] = right_sample
             
             self.phase_left += phase_inc_left
             self.phase_right += phase_inc_right
@@ -535,6 +549,24 @@ class BinauralTab:
         ttk.Scale(param_frame, from_=0, to=1, variable=self.amplitude,
                   orient='horizontal', length=150).pack(side='left')
         
+        # MONO MIX - Phase Cancellation Test Mode
+        mono_frame = ttk.LabelFrame(left_frame, text="🧪 Phase Cancellation Test", padding=5)
+        mono_frame.pack(fill='x', pady=5)
+        
+        self.mono_mix_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(mono_frame, text="MONO MIX (L+R)/2", variable=self.mono_mix_var,
+                        command=self._on_mono_change).pack(side='left')
+        ttk.Label(mono_frame, text="← At 180° with SAME freq = SILENCE!", 
+                  foreground='red').pack(side='left', padx=10)
+        
+        # Quick test buttons
+        test_frame = ttk.Frame(mono_frame)
+        test_frame.pack(fill='x', pady=3)
+        ttk.Button(test_frame, text="Test 180° Cancel", 
+                   command=self._test_180_cancel).pack(side='left', padx=2)
+        ttk.Button(test_frame, text="Test 0° Sum", 
+                   command=self._test_0_sum).pack(side='left', padx=2)
+        
         # Playback buttons - BIG
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill='x', pady=10)
@@ -639,6 +671,41 @@ class BinauralTab:
                     self.audio.set_frequencies(l, r)
         except:
             pass
+    
+    def _on_mono_change(self):
+        """Called when mono mix checkbox changes"""
+        mono = self.mono_mix_var.get()
+        self.audio.set_mono_mix(mono)
+        if mono:
+            self.info_var.set("⚠️ MONO MIX ON: L+R summed. 180° with same freq = SILENCE!")
+        else:
+            self.info_var.set("STEREO: L and R go to separate ears (binaural effect)")
+    
+    def _test_180_cancel(self):
+        """Quick test: Set 180° phase, same freq, mono - should be SILENCE"""
+        self.link_mode.set("manual")
+        self.freq_left.set(440.0)
+        self.freq_right.set(440.0)  # SAME frequency!
+        self.phase_angle.set(180.0)  # 180° = opposite phase
+        self.mono_mix_var.set(True)
+        self._on_mono_change()
+        self._update_frequencies()
+        if not self.audio.is_playing():
+            self._play()
+        self.info_var.set("🔇 TEST: 440Hz + 440Hz @ 180° MONO → SILENCE!")
+    
+    def _test_0_sum(self):
+        """Quick test: Set 0° phase, same freq, mono - should be LOUD"""
+        self.link_mode.set("manual")
+        self.freq_left.set(440.0)
+        self.freq_right.set(440.0)
+        self.phase_angle.set(0.0)  # 0° = same phase
+        self.mono_mix_var.set(True)
+        self._on_mono_change()
+        self._update_frequencies()
+        if not self.audio.is_playing():
+            self._play()
+        self.info_var.set("🔊 TEST: 440Hz + 440Hz @ 0° MONO → CONSTRUCTIVE!")
     
     def _draw_phase_circle(self):
         """Draw phase visualization"""
