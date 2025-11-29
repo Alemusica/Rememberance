@@ -758,7 +758,7 @@ class BinauralTab:
         self.info_var.set(f"🔊 Playing... L:{freq_l:.0f}Hz R:{freq_r:.0f}Hz Beat:{beat:.2f}Hz")
         
         # Use callback-based continuous playback
-        self.audio.start_continuous(freq_l, freq_r, phase, amp, wf)
+        self.audio.start_binaural(freq_l, freq_r, phase, amp, wf)
     
     def _stop(self):
         """Stop playback"""
@@ -1289,7 +1289,7 @@ class MolecularTab:
         self.info_text.config(state='disabled')
     
     def _play(self):
-        """Play molecule sound - CONTINUOUS until STOP"""
+        """Play molecule sound - CONTINUOUS with REAL SPECTRAL LINES until STOP"""
         formula = self.molecule.get()
         if not formula:
             messagebox.showwarning("Warning", "Select a molecule first!")
@@ -1300,15 +1300,23 @@ class MolecularTab:
             return
         
         mode = self.output_mode.get()
+        use_spectral = self.use_spectral.get()
         
         try:
-            # Extract frequencies, amplitudes, phases, and positions from molecule
-            frequencies = []
-            amplitudes = []
-            phases = []
-            positions = []
+            # ═══════════════════════════════════════════════════════════════════
+            # EXTRACT REAL SPECTRAL FREQUENCIES FROM EACH ATOM IN THE MOLECULE
+            # This is the PRECISE molecular sound based on:
+            # 1. Real spectral lines (Balmer for H, real lines for O, etc.)
+            # 2. Phase from bond angles (104.5° for H₂O, 180° for CO₂, etc.)
+            # 3. Stereo position from atomic mass
+            # ═══════════════════════════════════════════════════════════════════
             
-            # Calculate phase from bond angles
+            all_frequencies = []
+            all_amplitudes = []
+            all_phases = []
+            all_positions = []
+            
+            # Calculate base phases from bond angles
             base_phases = []
             if mol.bond_angles:
                 for angle in mol.bond_angles:
@@ -1318,45 +1326,102 @@ class MolecularTab:
             
             total_mass = mol.total_mass
             
-            # For each atom, create a frequency component
+            # Element name mapping for spectral data
+            element_names = {
+                'H': 'Hydrogen-Balmer',
+                'O': 'Oxygen',
+                'C': 'Carbon',
+                'N': 'Nitrogen',
+                'S': 'Sulfur',
+                'He': 'Helium',
+                'Na': 'Sodium',
+                'Ne': 'Neon',
+                'Hg': 'Mercury',
+                'Fe': 'Iron',
+                'Ca': 'Calcium',
+            }
+            
+            # For each atom, get its REAL spectral lines
             for i, atom in enumerate(mol.atoms):
-                # Frequency from bond length (if available)
-                if mol.bonds and i < len(mol.bonds):
-                    bond = mol.bonds[min(i, len(mol.bonds)-1)]
-                    freq = self.sounder.bond_length_to_frequency(bond.length)
-                else:
-                    freq = 200.0 + i * 50.0  # Default spread
-                
-                # Amplitude from electronegativity
-                amp = self.sounder.electronegativity_to_amplitude(atom.electronegativity)
-                
-                # Phase from bond angle + golden ratio offset
+                # Phase from bond angle + golden ratio offset for this atom
                 phase_idx = i % len(base_phases)
-                phase = base_phases[phase_idx] + (2 * np.pi * 0.618 * i)
+                atom_base_phase = base_phases[phase_idx] + (2 * np.pi * PHI_CONJUGATE * i)
                 
                 # Stereo position from mass
                 pan = self.sounder.mass_to_pan(atom.mass, total_mass)
                 position = (pan - 0.5) * 2  # Convert [0,1] to [-1, 1]
                 
-                frequencies.append(freq)
-                amplitudes.append(amp)
-                phases.append(phase)
-                positions.append(position)
+                if use_spectral:
+                    # Try to get REAL spectral lines for this element
+                    element_name = element_names.get(atom.symbol)
+                    if element_name and self.sounder.spectral_sounder:
+                        try:
+                            lines = self.sounder.spectral_sounder.get_spectral_lines(element_name)
+                            if lines:
+                                # Scale to audio frequencies
+                                scaled = self.sounder.spectral_sounder.scale_to_audio(lines)
+                                
+                                # Add each spectral line
+                                for j, (freq, amp) in enumerate(scaled):
+                                    # Phase: combine atom phase with golden sequence
+                                    line_phase = atom_base_phase + (2 * np.pi * PHI_CONJUGATE * j)
+                                    
+                                    all_frequencies.append(freq)
+                                    all_amplitudes.append(amp * 0.8)  # Scale down a bit
+                                    all_phases.append(line_phase)
+                                    all_positions.append(position)
+                                continue
+                        except:
+                            pass
+                
+                # Fallback: use bond length frequency if no spectral data
+                if mol.bonds and i < len(mol.bonds):
+                    bond = mol.bonds[min(i, len(mol.bonds)-1)]
+                    freq = self.sounder.bond_length_to_frequency(bond.length)
+                else:
+                    freq = 200.0 + i * 100.0
+                
+                amp = self.sounder.electronegativity_to_amplitude(atom.electronegativity)
+                
+                all_frequencies.append(freq)
+                all_amplitudes.append(amp)
+                all_phases.append(atom_base_phase)
+                all_positions.append(position)
             
-            # If binaural mode, add beat frequency to some components
+            # If binaural mode, create binaural effect
             if mode == "binaural":
                 beat = self.beat_freq.get()
-                for i in range(1, len(frequencies), 2):
-                    frequencies[i] += beat
-                positions = [(-0.9 if i % 2 == 0 else 0.9) for i in range(len(frequencies))]
+                # Add slightly shifted frequencies to alternating channels
+                new_freqs = []
+                new_amps = []
+                new_phases = []
+                new_positions = []
+                
+                for i, (f, a, p, pos) in enumerate(zip(all_frequencies, all_amplitudes, all_phases, all_positions)):
+                    # Original on left
+                    new_freqs.append(f)
+                    new_amps.append(a)
+                    new_phases.append(p)
+                    new_positions.append(-0.9)
+                    
+                    # Shifted on right (binaural beat)
+                    new_freqs.append(f + beat)
+                    new_amps.append(a)
+                    new_phases.append(p)
+                    new_positions.append(0.9)
+                
+                all_frequencies = new_freqs
+                all_amplitudes = new_amps
+                all_phases = new_phases
+                all_positions = new_positions
             
-            # Start continuous streaming
-            self.audio.start_spectral(frequencies, amplitudes, phases, positions,
+            # Start continuous streaming with REAL spectral data
+            self.audio.start_spectral(all_frequencies, all_amplitudes, all_phases, all_positions,
                                       master_amplitude=0.7)
             
             self.play_btn.config(state='disabled')
             self.stop_btn.config(state='normal')
-            self.status_var.set("🔊 Playing continuously...")
+            self.status_var.set(f"🔊 {mol.name}: {len(all_frequencies)} spectral lines")
             
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -1399,7 +1464,7 @@ class MolecularTab:
             messagebox.showerror("Error", str(e))
     
     def _on_param_change(self, *args):
-        """Update audio parameters in real-time when settings change"""
+        """Update audio parameters in real-time when settings change - WITH REAL SPECTRAL LINES"""
         if not self.audio.is_playing():
             return
         
@@ -1412,13 +1477,18 @@ class MolecularTab:
             return
         
         mode = self.output_mode.get()
+        use_spectral = self.use_spectral.get()
         
         try:
-            # Regenerate parameters for streaming audio
-            frequencies = []
-            amplitudes = []
-            phases = []
-            positions = []
+            # ═══════════════════════════════════════════════════════════════════
+            # REAL-TIME UPDATE WITH REAL SPECTRAL LINES
+            # Same precise logic as _play()
+            # ═══════════════════════════════════════════════════════════════════
+            
+            all_frequencies = []
+            all_amplitudes = []
+            all_phases = []
+            all_positions = []
             
             base_phases = []
             if mol.bond_angles:
@@ -1429,33 +1499,82 @@ class MolecularTab:
             
             total_mass = mol.total_mass
             
+            element_names = {
+                'H': 'Hydrogen-Balmer',
+                'O': 'Oxygen',
+                'C': 'Carbon',
+                'N': 'Nitrogen',
+                'S': 'Sulfur',
+                'He': 'Helium',
+                'Na': 'Sodium',
+                'Ne': 'Neon',
+                'Hg': 'Mercury',
+                'Fe': 'Iron',
+                'Ca': 'Calcium',
+            }
+            
             for i, atom in enumerate(mol.atoms):
-                if mol.bonds and i < len(mol.bonds):
-                    bond = mol.bonds[min(i, len(mol.bonds)-1)]
-                    freq = self.sounder.bond_length_to_frequency(bond.length)
-                else:
-                    freq = 200.0 + i * 50.0
-                
-                amp = self.sounder.electronegativity_to_amplitude(atom.electronegativity)
-                
                 phase_idx = i % len(base_phases)
-                phase = base_phases[phase_idx] + (2 * np.pi * 0.618 * i)
+                atom_base_phase = base_phases[phase_idx] + (2 * np.pi * PHI_CONJUGATE * i)
                 
                 pan = self.sounder.mass_to_pan(atom.mass, total_mass)
                 position = (pan - 0.5) * 2
                 
-                frequencies.append(freq)
-                amplitudes.append(amp)
-                phases.append(phase)
-                positions.append(position)
+                if use_spectral:
+                    element_name = element_names.get(atom.symbol)
+                    if element_name and self.sounder.spectral_sounder:
+                        try:
+                            lines = self.sounder.spectral_sounder.get_spectral_lines(element_name)
+                            if lines:
+                                scaled = self.sounder.spectral_sounder.scale_to_audio(lines)
+                                for j, (freq, amp) in enumerate(scaled):
+                                    line_phase = atom_base_phase + (2 * np.pi * PHI_CONJUGATE * j)
+                                    all_frequencies.append(freq)
+                                    all_amplitudes.append(amp * 0.8)
+                                    all_phases.append(line_phase)
+                                    all_positions.append(position)
+                                continue
+                        except:
+                            pass
+                
+                # Fallback
+                if mol.bonds and i < len(mol.bonds):
+                    bond = mol.bonds[min(i, len(mol.bonds)-1)]
+                    freq = self.sounder.bond_length_to_frequency(bond.length)
+                else:
+                    freq = 200.0 + i * 100.0
+                
+                amp = self.sounder.electronegativity_to_amplitude(atom.electronegativity)
+                
+                all_frequencies.append(freq)
+                all_amplitudes.append(amp)
+                all_phases.append(atom_base_phase)
+                all_positions.append(position)
             
             if mode == "binaural":
                 beat = self.beat_freq.get()
-                for i in range(1, len(frequencies), 2):
-                    frequencies[i] += beat
-                positions = [(-0.9 if i % 2 == 0 else 0.9) for i in range(len(frequencies))]
+                new_freqs = []
+                new_amps = []
+                new_phases = []
+                new_positions = []
+                
+                for i, (f, a, p, pos) in enumerate(zip(all_frequencies, all_amplitudes, all_phases, all_positions)):
+                    new_freqs.append(f)
+                    new_amps.append(a)
+                    new_phases.append(p)
+                    new_positions.append(-0.9)
+                    
+                    new_freqs.append(f + beat)
+                    new_amps.append(a)
+                    new_phases.append(p)
+                    new_positions.append(0.9)
+                
+                all_frequencies = new_freqs
+                all_amplitudes = new_amps
+                all_phases = new_phases
+                all_positions = new_positions
             
-            self.audio.set_spectral_params(frequencies, amplitudes, phases, positions)
+            self.audio.set_spectral_params(all_frequencies, all_amplitudes, all_phases, all_positions)
         except:
             pass
 
