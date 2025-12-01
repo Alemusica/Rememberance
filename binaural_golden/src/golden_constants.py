@@ -404,6 +404,181 @@ def stereo_pan(pan: float) -> tuple:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SOUND → LIGHT SPECTRUM MAPPING (Synesthesia / Cymatics)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Scientific basis:
+# - Both sound and light are waves with frequency/wavelength
+# - Visible light: 380nm (violet) to 700nm (red) = 430-790 THz
+# - Audible sound: 20 Hz to 20,000 Hz
+# 
+# Mapping method:
+# - Map sound octaves to visible spectrum octaves
+# - Use 40 octaves difference (2^40 ≈ 10^12, sound Hz → light THz)
+# - Color corresponds to the harmonic relationship
+#
+# HEACC (color psychology for relaxation):
+# - Blue-green spectrum: calming, reduces anxiety
+# - Warm colors: grounding, comfort
+# - Golden ratios in color mixing enhance harmonic perception
+
+# Visible light frequency range (THz)
+LIGHT_FREQ_MIN_THZ: float = 430.0   # Red
+LIGHT_FREQ_MAX_THZ: float = 790.0   # Violet
+
+# Sound frequency anchor point (A4 = 440 Hz maps to Green ~540 THz)
+SOUND_LIGHT_ANCHOR_HZ: float = 440.0
+SOUND_LIGHT_ANCHOR_THZ: float = 540.0  # Green (restful for eyes)
+
+
+def sound_to_light_frequency(sound_freq_hz: float) -> float:
+    """
+    Map sound frequency to corresponding light frequency using octave scaling.
+    
+    Uses logarithmic mapping: each octave in sound corresponds to 
+    an octave in light spectrum (frequency doubling).
+    
+    Args:
+        sound_freq_hz: Sound frequency in Hz (20-20000 typical)
+    
+    Returns:
+        Light frequency in THz (visible spectrum ~430-790 THz)
+    """
+    # Calculate octave distance from anchor
+    octave_ratio = np.log2(sound_freq_hz / SOUND_LIGHT_ANCHOR_HZ)
+    
+    # Apply same octave ratio to light frequency
+    # Scale factor determines how many sound octaves = one light octave
+    # Using golden ratio for harmonic scaling
+    light_freq = SOUND_LIGHT_ANCHOR_THZ * (2.0 ** (octave_ratio / PHI))
+    
+    # Wrap to visible spectrum (modulo the octave range)
+    light_range = LIGHT_FREQ_MAX_THZ - LIGHT_FREQ_MIN_THZ
+    while light_freq > LIGHT_FREQ_MAX_THZ:
+        light_freq -= light_range * PHI_CONJUGATE
+    while light_freq < LIGHT_FREQ_MIN_THZ:
+        light_freq += light_range * PHI_CONJUGATE
+    
+    return light_freq
+
+
+def light_frequency_to_rgb(freq_thz: float) -> tuple:
+    """
+    Convert light frequency (THz) to RGB color.
+    
+    Based on CIE color matching functions approximation.
+    Returns (R, G, B) each in range 0-255.
+    """
+    # Normalize to 0-1 range within visible spectrum
+    t = (freq_thz - LIGHT_FREQ_MIN_THZ) / (LIGHT_FREQ_MAX_THZ - LIGHT_FREQ_MIN_THZ)
+    t = np.clip(t, 0.0, 1.0)
+    
+    # Approximate visible spectrum color distribution
+    # 0.0 = Red (700nm), 1.0 = Violet (380nm)
+    if t < 0.17:  # Red to Orange
+        r = 1.0
+        g = t / 0.17 * 0.5
+        b = 0.0
+    elif t < 0.33:  # Orange to Yellow
+        r = 1.0
+        g = 0.5 + (t - 0.17) / 0.16 * 0.5
+        b = 0.0
+    elif t < 0.50:  # Yellow to Green
+        r = 1.0 - (t - 0.33) / 0.17
+        g = 1.0
+        b = 0.0
+    elif t < 0.60:  # Green to Cyan
+        r = 0.0
+        g = 1.0
+        b = (t - 0.50) / 0.10
+    elif t < 0.75:  # Cyan to Blue
+        r = 0.0
+        g = 1.0 - (t - 0.60) / 0.15
+        b = 1.0
+    elif t < 0.88:  # Blue to Violet
+        r = (t - 0.75) / 0.13 * 0.5
+        g = 0.0
+        b = 1.0
+    else:  # Violet
+        r = 0.5 + (t - 0.88) / 0.12 * 0.3
+        g = 0.0
+        b = 1.0 - (t - 0.88) / 0.12 * 0.2
+    
+    # Apply gamma correction and intensity adjustment
+    gamma = 0.8
+    intensity = 1.0 - 0.3 * abs(t - 0.5)  # Slightly brighter at center
+    
+    r = int(255 * (r * intensity) ** gamma)
+    g = int(255 * (g * intensity) ** gamma)
+    b = int(255 * (b * intensity) ** gamma)
+    
+    return (r, g, b)
+
+
+def sound_to_light_color(sound_freq_hz: float) -> str:
+    """
+    Map a sound frequency to its corresponding light color (hex string).
+    
+    This creates a synesthetic mapping where:
+    - Lower frequencies → warmer colors (reds, oranges)
+    - Higher frequencies → cooler colors (blues, violets)
+    - Harmonic relationships in sound = harmonic relationships in color
+    
+    Args:
+        sound_freq_hz: Sound frequency in Hz
+    
+    Returns:
+        Hex color string like '#FF8800'
+    """
+    light_freq = sound_to_light_frequency(sound_freq_hz)
+    r, g, b = light_frequency_to_rgb(light_freq)
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+
+def harmonic_color_palette(fundamental_hz: float, num_harmonics: int = 8) -> list:
+    """
+    Generate a color palette for harmonics of a fundamental frequency.
+    
+    Each harmonic gets a color based on its frequency's position
+    in the light spectrum, creating visual harmony.
+    
+    Args:
+        fundamental_hz: Fundamental frequency
+        num_harmonics: Number of harmonics to include
+    
+    Returns:
+        List of hex color strings
+    """
+    colors = [sound_to_light_color(fundamental_hz)]  # Fundamental
+    
+    # Use Fibonacci ratios for harmonics
+    fib_ratios = fibonacci_harmonic_ratios(num_harmonics)
+    for ratio in fib_ratios[:num_harmonics]:
+        freq = fundamental_hz * ratio
+        colors.append(sound_to_light_color(freq))
+    
+    return colors
+
+
+# Solfeggio frequencies and their properties (ancient healing tones)
+SOLFEGGIO_FREQUENCIES = {
+    174: {'name': 'UT', 'color': None, 'property': 'Pain reduction, safety'},
+    285: {'name': 'RE', 'color': None, 'property': 'Tissue healing'},
+    396: {'name': 'MI', 'color': None, 'property': 'Liberating guilt and fear'},
+    417: {'name': 'FA', 'color': None, 'property': 'Facilitating change'},
+    528: {'name': 'SOL', 'color': None, 'property': 'DNA repair, miracles'},
+    639: {'name': 'LA', 'color': None, 'property': 'Relationships, connection'},
+    741: {'name': 'SI', 'color': None, 'property': 'Expression, solutions'},
+    852: {'name': 'TI', 'color': None, 'property': 'Spiritual awakening'},
+    963: {'name': 'DO', 'color': None, 'property': 'Divine consciousness'},
+}
+
+# Initialize Solfeggio colors
+for freq, data in SOLFEGGIO_FREQUENCIES.items():
+    data['color'] = sound_to_light_color(freq)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MODULE INFO
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -440,6 +615,10 @@ __all__ = [
     
     # Utilities
     'deg_to_rad', 'rad_to_deg', 'normalize_audio', 'stereo_pan',
+    
+    # Sound → Light mapping
+    'sound_to_light_frequency', 'light_frequency_to_rgb', 'sound_to_light_color',
+    'harmonic_color_palette', 'SOLFEGGIO_FREQUENCIES',
 ]
 
 
@@ -467,3 +646,10 @@ if __name__ == "__main__":
     print("Fibonacci harmonic ratios:", fibonacci_harmonic_ratios(6))
     print("Golden phases (5):", [f"{p:.3f}" for p in generate_golden_phases(5)])
     print("φ amplitude decay (5):", [f"{a:.3f}" for a in phi_amplitude_decay(5)])
+    
+    # Test sound-to-color mapping
+    print("\nSound → Light Spectrum Mapping:")
+    test_freqs = [256, 432, 528, 639, 741, 852, 963]
+    for freq in test_freqs:
+        color = sound_to_light_color(freq)
+        print(f"  {freq}Hz → {color}")

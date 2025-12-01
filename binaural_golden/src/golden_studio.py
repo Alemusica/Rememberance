@@ -32,6 +32,7 @@ from golden_constants import (
     golden_wave_sample, apply_golden_envelope, golden_ease,
     generate_golden_phases, fibonacci_harmonics, phi_amplitude_decay,
     FIBONACCI,
+    sound_to_light_color, harmonic_color_palette, SOLFEGGIO_FREQUENCIES,
 )
 
 # PyAudio
@@ -2244,116 +2245,250 @@ class HarmonicTreeTab:
         return frequencies, amplitudes, phases, positions
     
     def _draw_tree(self, elapsed_fraction=0.0):
-        """Draw the harmonic tree visualization with growth state"""
+        """
+        Draw 3D isometric harmonic tree visualization.
+        
+        Features:
+        - Isometric 3D projection for depth
+        - Sound → Light spectrum colors (synesthesia mapping)
+        - Swiss typography (Helvetica, clean grid)
+        - Golden angle phyllotaxis pattern
+        """
         self.canvas.delete('all')
         
         is_growing = self._is_growing and self.growth_mode.get()
         frequencies, amplitudes, phases, positions = self._calculate_harmonics(
             apply_growth=is_growing, elapsed_fraction=elapsed_fraction)
         
-        # Canvas center
-        cx, cy = 200, 380
+        # ═══════════════════════════════════════════════════════════════════
+        # SWISS DESIGN: Clean dark background with subtle grid
+        # ═══════════════════════════════════════════════════════════════════
+        self.canvas.configure(bg='#0a0a0f')  # Deep dark blue-black
         
-        # Draw trunk (fundamental) - grows from seed
+        # Subtle grid for Swiss design aesthetic
+        grid_color = '#15151f'
+        for x in range(0, 400, 40):
+            self.canvas.create_line(x, 0, x, 400, fill=grid_color, width=1)
+        for y in range(0, 400, 40):
+            self.canvas.create_line(0, y, 400, y, fill=grid_color, width=1)
+        
+        # Canvas center for 3D projection
+        cx, cy = 200, 320
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # 3D ISOMETRIC PROJECTION HELPERS
+        # ═══════════════════════════════════════════════════════════════════
+        def iso_project(x3d, y3d, z3d):
+            """Convert 3D coords to 2D isometric projection"""
+            # Isometric angles: 30° for x-axis, -30° for z-axis
+            iso_angle = np.radians(30)
+            x2d = cx + (x3d - z3d) * np.cos(iso_angle)
+            y2d = cy - y3d - (x3d + z3d) * np.sin(iso_angle) * 0.5
+            return x2d, y2d
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # 3D GROUND PLANE (subtle reference)
+        # ═══════════════════════════════════════════════════════════════════
+        ground_color = '#1a1a2a'
+        for r in [60, 100, 140]:
+            points = []
+            for angle in range(0, 360, 15):
+                rad = np.radians(angle)
+                x3d, z3d = r * np.cos(rad), r * np.sin(rad)
+                x2d, y2d = iso_project(x3d, 0, z3d)
+                points.extend([x2d, y2d])
+            if len(points) >= 4:
+                self.canvas.create_polygon(points, outline=ground_color, fill='', width=1)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TRUNK (Fundamental frequency) - 3D cylinder effect
+        # ═══════════════════════════════════════════════════════════════════
         trunk_growth = self._current_growth_level[0] if is_growing else 1.0
-        trunk_height = 100 * trunk_growth
-        trunk_width = max(2, 15 * amplitudes[0] * trunk_growth)
+        trunk_height = 120 * trunk_growth
+        trunk_width = max(3, 12 * amplitudes[0] * trunk_growth)
+        
+        # Trunk color based on fundamental frequency
+        trunk_color = sound_to_light_color(frequencies[0])
+        trunk_shadow = '#3d2817'
         
         if trunk_height > 0:
-            self.canvas.create_line(cx, cy, cx, cy - trunk_height, 
-                                   fill='#8B4513', width=trunk_width)
+            # Draw trunk with 3D shading (left side darker)
+            x2d_base, y2d_base = iso_project(0, 0, 0)
+            x2d_top, y2d_top = iso_project(0, trunk_height, 0)
+            
+            # Shadow side
+            offset = trunk_width * 0.3
+            self.canvas.create_line(x2d_base - offset, y2d_base,
+                                   x2d_top - offset, y2d_top,
+                                   fill=trunk_shadow, width=trunk_width * 0.7)
+            # Main trunk
+            self.canvas.create_line(x2d_base, y2d_base, x2d_top, y2d_top,
+                                   fill=trunk_color, width=trunk_width,
+                                   capstyle='round')
         
-        # Label trunk
-        self.canvas.create_text(cx, cy + 15, text=f"{frequencies[0]:.1f} Hz",
-                               fill='#ffd700', font=('Courier', 10, 'bold'))
+        # ═══════════════════════════════════════════════════════════════════
+        # BRANCHES (Harmonics) - 3D Golden Angle Phyllotaxis
+        # ═══════════════════════════════════════════════════════════════════
+        branch_origin_y = trunk_height
         
-        # Draw branches (harmonics)
-        branch_origin_y = cy - trunk_height
-        
-        # Colors for branches (rainbow gradient based on frequency)
-        colors = ['#ff6b6b', '#ffd700', '#00ff88', '#4ecdc4', '#ff00ff', 
-                  '#00bfff', '#ff8c00', '#9370db', '#32cd32', '#ff69b4',
-                  '#00ced1', '#ffa07a', '#98fb98']
+        # Collect branches for depth sorting (draw back-to-front)
+        branches = []
         
         for i in range(1, len(frequencies)):
             growth = self._current_growth_level[i] if is_growing else 1.0
             
-            # Skip if not yet emerged
             if growth < 0.01:
                 continue
             
-            # ═══════════════════════════════════════════════════════════════
-            # PROPER GOLDEN ANGLE (PHYLLOTAXIS) VISUALIZATION
-            # Each branch at i × 137.5° - like sunflower seeds!
-            # This creates the famous non-overlapping spiral pattern
-            # ═══════════════════════════════════════════════════════════════
-            golden_angle_deg = 137.507764  # The golden angle in degrees
-            branch_angle = i * golden_angle_deg  # Cumulative rotation
+            # Golden angle rotation (137.5° per branch)
+            golden_angle = i * GOLDEN_ANGLE_DEG
+            angle_rad = np.radians(golden_angle)
             
-            # Convert to radians, starting from vertical (up = 0°)
-            angle_rad = np.radians(branch_angle)
+            # 3D spiral: branches grow outward and upward
+            # Radius increases with sqrt(i) for Fermat spiral
+            spiral_radius = 25 * np.sqrt(i) * growth
             
-            # Branch length proportional to amplitude AND growth
-            # Longer branches for lower harmonics (more energy)
-            base_length = 80 * amplitudes[0] + 40
-            # Distance from center increases with index (spiral outward)
-            radius_factor = 0.6 + (i * 0.15)  # Each branch slightly further out
-            branch_length = base_length * growth * radius_factor
+            # Height increases with golden ratio for each layer
+            layer_height = branch_origin_y + (i * 15 * PHI_CONJUGATE) * growth
             
-            # Branch width proportional to amplitude AND growth
-            branch_width = max(1, (10 * amplitudes[0] + 2) * growth * (1.0 - i * 0.05))
+            # 3D position of branch tip
+            x3d = spiral_radius * np.cos(angle_rad)
+            z3d = spiral_radius * np.sin(angle_rad)
+            y3d = layer_height + 20 * growth  # Slight upward tilt
             
-            # Calculate branch endpoint using polar coordinates
-            # Branches radiate from a central point in golden angle pattern
-            center_y = branch_origin_y - 60  # Central point above trunk top
+            # Branch length and width
+            branch_length = (40 + 30 * amplitudes[i]) * growth
+            branch_width = max(1, (8 - i * 0.3) * growth)
             
-            end_x = cx + branch_length * np.sin(angle_rad)
-            end_y = center_y - branch_length * np.cos(angle_rad) * 0.6
-            
-            color = colors[(i - 1) % len(colors)]
+            # SOUND → LIGHT COLOR MAPPING
+            color = sound_to_light_color(frequencies[i])
             
             # Fade color during emergence
             if growth < 1.0:
-                # Blend with dark background
-                r = int(int(color[1:3], 16) * growth)
-                g = int(int(color[3:5], 16) * growth)
-                b = int(int(color[5:7], 16) * growth)
+                r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+                r, g, b = int(r * growth), int(g * growth), int(b * growth)
                 color = f'#{r:02x}{g:02x}{b:02x}'
             
-            # Draw branch from center point
-            self.canvas.create_line(cx, center_y, end_x, end_y,
-                                   fill=color, width=branch_width,
+            # Calculate depth for sorting (z-order)
+            depth = z3d
+            
+            branches.append({
+                'i': i,
+                'x3d': x3d, 'y3d': y3d, 'z3d': z3d,
+                'length': branch_length,
+                'width': branch_width,
+                'color': color,
+                'growth': growth,
+                'freq': frequencies[i],
+                'depth': depth
+            })
+        
+        # Sort by depth (back to front)
+        branches.sort(key=lambda b: b['depth'])
+        
+        # Draw branches
+        for branch in branches:
+            i = branch['i']
+            x3d, y3d, z3d = branch['x3d'], branch['y3d'], branch['z3d']
+            
+            # Branch start (at trunk)
+            start_x2d, start_y2d = iso_project(0, branch_origin_y + i * 5, 0)
+            
+            # Branch end (tip)
+            end_x2d, end_y2d = iso_project(x3d, y3d, z3d)
+            
+            # Draw branch line
+            self.canvas.create_line(start_x2d, start_y2d, end_x2d, end_y2d,
+                                   fill=branch['color'], width=branch['width'],
                                    capstyle='round')
             
-            # Draw leaf/node at end (grows with branch)
-            node_size = (5 + amplitudes[0] * 10) * growth
-            if node_size >= 1:
-                self.canvas.create_oval(end_x - node_size, end_y - node_size,
-                                       end_x + node_size, end_y + node_size,
-                                       fill=color, outline='white' if growth > 0.8 else '')
+            # Draw node/sphere at tip (3D effect with highlight)
+            node_size = (4 + amplitudes[0] * 6) * branch['growth']
+            if node_size >= 2:
+                # Shadow
+                self.canvas.create_oval(
+                    end_x2d - node_size + 1, end_y2d - node_size + 1,
+                    end_x2d + node_size + 1, end_y2d + node_size + 1,
+                    fill='#000000', outline='')
+                # Main node
+                self.canvas.create_oval(
+                    end_x2d - node_size, end_y2d - node_size,
+                    end_x2d + node_size, end_y2d + node_size,
+                    fill=branch['color'], outline='')
+                # Highlight
+                hl_size = node_size * 0.4
+                self.canvas.create_oval(
+                    end_x2d - hl_size - node_size*0.3, end_y2d - hl_size - node_size*0.3,
+                    end_x2d + hl_size - node_size*0.3, end_y2d + hl_size - node_size*0.3,
+                    fill='#ffffff', outline='')
             
-            # Label (only when mostly grown)
-            if i <= 6 and growth > 0.6:
-                label_x = end_x + (15 if end_x > cx else -15)
-                alpha = int(255 * growth)
-                self.canvas.create_text(label_x, end_y,
-                                       text=f"{frequencies[i]:.0f}Hz",
-                                       fill=colors[(i - 1) % len(colors)], font=('Courier', 8))
+            # Swiss typography labels (Helvetica, clean positioning)
+            if i <= 5 and branch['growth'] > 0.6:
+                label_offset = 18
+                label_x = end_x2d + (label_offset if end_x2d > cx else -label_offset)
+                anchor = 'w' if end_x2d > cx else 'e'
+                self.canvas.create_text(label_x, end_y2d,
+                                       text=f"{branch['freq']:.0f}",
+                                       fill=branch['color'], 
+                                       font=('Helvetica Neue', 9),
+                                       anchor=anchor)
         
-        # Draw golden spiral at center (decorative) - also grows
-        if trunk_height > 50:
-            self._draw_golden_spiral(cx, branch_origin_y - 50, growth=elapsed_fraction if is_growing else 1.0)
+        # ═══════════════════════════════════════════════════════════════════
+        # GOLDEN SPIRAL (3D decorative element)
+        # ═══════════════════════════════════════════════════════════════════
+        if trunk_height > 40:
+            spiral_points = []
+            spiral_growth = elapsed_fraction if is_growing else 1.0
+            num_points = int(40 * spiral_growth)
+            for j in range(max(2, num_points)):
+                angle = j * GOLDEN_ANGLE_RAD * 0.4
+                r = 6 * np.sqrt(j * 0.3) * spiral_growth
+                x3d = r * np.cos(angle)
+                z3d = r * np.sin(angle)
+                y3d = trunk_height * 0.7 + j * 0.5
+                x2d, y2d = iso_project(x3d, y3d, z3d)
+                spiral_points.extend([x2d, y2d])
+            
+            if len(spiral_points) >= 4:
+                self.canvas.create_line(spiral_points, fill='#ffd700', 
+                                       width=1.5, smooth=True)
         
-        # Title with growth status
+        # ═══════════════════════════════════════════════════════════════════
+        # SWISS TYPOGRAPHY: Title and Info
+        # ═══════════════════════════════════════════════════════════════════
         mode = self.harmonic_mode.get()
+        
+        # Minimal Swiss-style title
         if is_growing:
             percent = int(elapsed_fraction * 100)
-            title = f"Growing... {percent}% ({mode.capitalize()} ratios)"
+            title = f"{percent}%"
+            subtitle = f"growing · {mode}"
         else:
-            title = f"Harmonic Tree ({mode.capitalize()} ratios)"
-        self.canvas.create_text(200, 20, 
-                               text=title,
-                               fill='#ffd700', font=('Helvetica', 12, 'bold'))
+            title = "φ"
+            subtitle = f"harmonic tree · {mode}"
+        
+        # Title - large, bold
+        self.canvas.create_text(20, 20, text=title,
+                               fill='#ffffff', font=('Helvetica Neue', 24, 'bold'),
+                               anchor='nw')
+        # Subtitle - small, light
+        self.canvas.create_text(20, 50, text=subtitle,
+                               fill='#888888', font=('Helvetica Neue', 10),
+                               anchor='nw')
+        
+        # Fundamental frequency display
+        fund_color = sound_to_light_color(frequencies[0])
+        self.canvas.create_text(20, 380, text=f"ƒ₀ = {frequencies[0]:.1f} Hz",
+                               fill=fund_color, font=('Helvetica Neue', 11),
+                               anchor='sw')
+        
+        # Color legend (small, bottom right)
+        legend_x = 380
+        legend_y = 380
+        self.canvas.create_text(legend_x, legend_y, 
+                               text="sound→light",
+                               fill='#555555', font=('Helvetica Neue', 8),
+                               anchor='se')
     
     def _draw_golden_spiral(self, cx, cy, growth=1.0):
         """Draw a small golden spiral at the center"""
