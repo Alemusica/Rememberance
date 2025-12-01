@@ -1645,6 +1645,364 @@ class MolecularTab:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 4: HARMONIC TREE
+# ══════════════════════════════════════════════════════════════════════════════
+
+class HarmonicTreeTab:
+    """
+    Generate fundamental + harmonics visualized as a tree.
+    
+    Based on natural phyllotaxis patterns:
+    - Trunk = Fundamental frequency
+    - Branches = Harmonics at Fibonacci ratios (2f, 3f, 5f, 8f, 13f)
+    - Branch thickness = Amplitude (φ⁻ⁿ decay)
+    - Branch rotation = Phase (cumulative golden angle: n × 137.5°)
+    
+    "The universe grows in spirals - so does sound"
+    """
+    
+    def __init__(self, parent, audio_engine: AudioEngine):
+        self.parent = parent
+        self.audio = audio_engine
+        self.frame = ttk.Frame(parent)
+        
+        # State
+        self.fundamental = tk.DoubleVar(value=432.0)  # Base frequency
+        self.num_harmonics = tk.IntVar(value=5)       # Number of harmonics
+        self.harmonic_mode = tk.StringVar(value="fibonacci")  # fibonacci or integer
+        self.amplitude_decay = tk.StringVar(value="phi")  # phi, sqrt, linear
+        self.amplitude = tk.DoubleVar(value=0.7)
+        self.stereo_spread = tk.DoubleVar(value=0.5)  # 0 = mono, 1 = full spread
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Build the UI"""
+        # Left panel - Controls
+        left_frame = ttk.LabelFrame(self.frame, text="🌳 Harmonic Tree Controls", padding=10)
+        left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        
+        # Fundamental frequency
+        fund_frame = ttk.LabelFrame(left_frame, text="🎵 Fundamental (Trunk)", padding=5)
+        fund_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(fund_frame, text="Frequency (Hz):").pack(side='left')
+        ttk.Entry(fund_frame, textvariable=self.fundamental, width=8).pack(side='left', padx=5)
+        ttk.Scale(fund_frame, from_=20, to=1000, variable=self.fundamental,
+                  orient='horizontal', length=200).pack(side='left', padx=5)
+        
+        # Frequency presets
+        preset_frame = ttk.Frame(fund_frame)
+        preset_frame.pack(fill='x', pady=3)
+        for name, freq in [("C₄", 261.63), ("A₄", 440), ("432Hz", 432), ("φ×100", PHI * 100)]:
+            ttk.Button(preset_frame, text=name, width=6,
+                      command=lambda f=freq: self.fundamental.set(f)).pack(side='left', padx=2)
+        
+        # Harmonics configuration
+        harm_frame = ttk.LabelFrame(left_frame, text="🌿 Harmonics (Branches)", padding=5)
+        harm_frame.pack(fill='x', pady=5)
+        
+        # Number of harmonics
+        num_row = ttk.Frame(harm_frame)
+        num_row.pack(fill='x', pady=3)
+        ttk.Label(num_row, text="Harmonics:").pack(side='left')
+        ttk.Spinbox(num_row, from_=1, to=13, textvariable=self.num_harmonics, width=5).pack(side='left', padx=5)
+        
+        # Harmonic mode
+        mode_row = ttk.Frame(harm_frame)
+        mode_row.pack(fill='x', pady=3)
+        ttk.Label(mode_row, text="Ratios:").pack(side='left')
+        ttk.Radiobutton(mode_row, text="Fibonacci (2,3,5,8,13...)", 
+                       variable=self.harmonic_mode, value="fibonacci").pack(side='left', padx=5)
+        ttk.Radiobutton(mode_row, text="Integer (2,3,4,5,6...)", 
+                       variable=self.harmonic_mode, value="integer").pack(side='left', padx=5)
+        
+        # Amplitude decay mode
+        decay_row = ttk.Frame(harm_frame)
+        decay_row.pack(fill='x', pady=3)
+        ttk.Label(decay_row, text="Decay:").pack(side='left')
+        for name, val in [("φ⁻ⁿ", "phi"), ("1/√n", "sqrt"), ("1/n", "linear")]:
+            ttk.Radiobutton(decay_row, text=name, variable=self.amplitude_decay, value=val).pack(side='left', padx=5)
+        
+        # Phase info
+        phase_info = ttk.LabelFrame(left_frame, text="🌀 Phases (Golden Angle)", padding=5)
+        phase_info.pack(fill='x', pady=5)
+        ttk.Label(phase_info, text="Each harmonic rotated by 137.5° (φ angle)",
+                 font=('Courier', 9)).pack()
+        ttk.Label(phase_info, text="n=1: 137.5°, n=2: 275°, n=3: 412.5° (≡52.5°)...",
+                 font=('Courier', 9), foreground='#888').pack()
+        
+        # Master controls
+        master_frame = ttk.LabelFrame(left_frame, text="🎚️ Master", padding=5)
+        master_frame.pack(fill='x', pady=5)
+        
+        amp_row = ttk.Frame(master_frame)
+        amp_row.pack(fill='x', pady=2)
+        ttk.Label(amp_row, text="Amplitude:").pack(side='left')
+        ttk.Scale(amp_row, from_=0, to=1, variable=self.amplitude,
+                  orient='horizontal', length=150).pack(side='left', padx=5)
+        
+        stereo_row = ttk.Frame(master_frame)
+        stereo_row.pack(fill='x', pady=2)
+        ttk.Label(stereo_row, text="Stereo Spread:").pack(side='left')
+        ttk.Scale(stereo_row, from_=0, to=1, variable=self.stereo_spread,
+                  orient='horizontal', length=150).pack(side='left', padx=5)
+        
+        # Playback buttons
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill='x', pady=10)
+        
+        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY", command=self._play)
+        self.play_btn.pack(side='left', padx=5)
+        
+        self.stop_btn = ttk.Button(btn_frame, text="⏹ STOP", command=self._stop, state='disabled')
+        self.stop_btn.pack(side='left', padx=5)
+        
+        # Right panel - Tree Visualization
+        right_frame = ttk.LabelFrame(self.frame, text="🌳 Tree Visualization", padding=10)
+        right_frame.pack(side='right', fill='both', expand=True, padx=5, pady=5)
+        
+        self.canvas = tk.Canvas(right_frame, width=400, height=400, bg='#0a0a15')
+        self.canvas.pack(pady=10)
+        
+        # Info panel
+        self.info_text = tk.Text(right_frame, width=45, height=8, bg='#0a0a15',
+                                fg='#00ff88', font=('Courier', 9), state='disabled')
+        self.info_text.pack(fill='x')
+        
+        self.status_var = tk.StringVar(value="Configure harmonics and press PLAY")
+        ttk.Label(right_frame, textvariable=self.status_var).pack()
+        
+        # Bind updates
+        self.fundamental.trace_add('write', self._on_param_change)
+        self.num_harmonics.trace_add('write', self._on_param_change)
+        self.harmonic_mode.trace_add('write', self._on_param_change)
+        self.amplitude_decay.trace_add('write', self._on_param_change)
+        self.amplitude.trace_add('write', self._on_param_change)
+        self.stereo_spread.trace_add('write', self._on_param_change)
+        
+        # Initial draw
+        self._draw_tree()
+    
+    def _calculate_harmonics(self):
+        """
+        Calculate harmonic frequencies, amplitudes, phases, and stereo positions.
+        
+        Returns:
+            (frequencies, amplitudes, phases, positions)
+        """
+        fund = self.fundamental.get()
+        n = self.num_harmonics.get()
+        mode = self.harmonic_mode.get()
+        decay = self.amplitude_decay.get()
+        spread = self.stereo_spread.get()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # FREQUENCIES: Fibonacci or Integer ratios
+        # ═══════════════════════════════════════════════════════════════════
+        
+        if mode == "fibonacci":
+            # Use Fibonacci ratios: 2, 3, 5, 8, 13, 21...
+            fib_ratios = [FIBONACCI[i+2] for i in range(n)]  # Start from F(3)=2
+            frequencies = [fund] + [fund * r for r in fib_ratios]
+        else:
+            # Integer harmonics: 2, 3, 4, 5, 6...
+            frequencies = [fund] + [fund * (i + 2) for i in range(n)]
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # AMPLITUDES: Various decay modes
+        # ═══════════════════════════════════════════════════════════════════
+        
+        total = len(frequencies)
+        if decay == "phi":
+            # Golden ratio decay: φ⁻ⁿ
+            amplitudes = [PHI_CONJUGATE ** i for i in range(total)]
+        elif decay == "sqrt":
+            # 1/√n decay (gentler)
+            amplitudes = [1.0 / np.sqrt(i + 1) for i in range(total)]
+        else:
+            # 1/n decay (classic)
+            amplitudes = [1.0 / (i + 1) for i in range(total)]
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PHASES: Cumulative Golden Angle (phyllotaxis pattern)
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Each harmonic is rotated by n × 137.5°
+        # This is the pattern found in sunflower seeds!
+        phases = [(i * GOLDEN_ANGLE_RAD) % (2 * np.pi) for i in range(total)]
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEREO: Spiral positioning based on golden angle
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Fundamental at center, harmonics spiral outward
+        positions = []
+        for i in range(total):
+            # Use golden angle for stereo position
+            angle = i * GOLDEN_ANGLE_RAD
+            pan = np.sin(angle) * spread  # -spread to +spread
+            positions.append(pan)
+        
+        return frequencies, amplitudes, phases, positions
+    
+    def _draw_tree(self):
+        """Draw the harmonic tree visualization"""
+        self.canvas.delete('all')
+        
+        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        
+        # Canvas center
+        cx, cy = 200, 380
+        
+        # Draw trunk (fundamental)
+        trunk_height = 100
+        trunk_width = 15 * amplitudes[0]  # Trunk thickness from amplitude
+        
+        self.canvas.create_line(cx, cy, cx, cy - trunk_height, 
+                               fill='#8B4513', width=trunk_width)
+        
+        # Label trunk
+        self.canvas.create_text(cx, cy + 15, text=f"{frequencies[0]:.1f} Hz",
+                               fill='#ffd700', font=('Courier', 10, 'bold'))
+        
+        # Draw branches (harmonics)
+        branch_origin_y = cy - trunk_height
+        
+        # Colors for branches (rainbow gradient based on frequency)
+        colors = ['#ff6b6b', '#ffd700', '#00ff88', '#4ecdc4', '#ff00ff', 
+                  '#00bfff', '#ff8c00', '#9370db', '#32cd32', '#ff69b4',
+                  '#00ced1', '#ffa07a', '#98fb98']
+        
+        for i in range(1, len(frequencies)):
+            # Phase determines angle from trunk
+            phase_deg = np.degrees(phases[i])
+            angle_from_vertical = (phase_deg % 360) - 180  # Center around vertical
+            
+            # Branch length proportional to amplitude
+            branch_length = 80 * amplitudes[i] + 30
+            
+            # Branch width proportional to amplitude
+            branch_width = 10 * amplitudes[i] + 2
+            
+            # Calculate branch endpoint
+            angle_rad = np.radians(angle_from_vertical)
+            
+            # Y offset for each harmonic (stack them up)
+            y_offset = i * 25
+            origin_y = branch_origin_y - y_offset
+            
+            end_x = cx + branch_length * np.sin(angle_rad)
+            end_y = origin_y - branch_length * np.cos(angle_rad) * 0.5
+            
+            color = colors[(i - 1) % len(colors)]
+            
+            # Draw branch
+            self.canvas.create_line(cx, origin_y, end_x, end_y,
+                                   fill=color, width=branch_width,
+                                   capstyle='round')
+            
+            # Draw leaf/node at end
+            node_size = 5 + amplitudes[i] * 10
+            self.canvas.create_oval(end_x - node_size, end_y - node_size,
+                                   end_x + node_size, end_y + node_size,
+                                   fill=color, outline='white')
+            
+            # Label
+            if i <= 6:  # Only label first few
+                label_x = end_x + (15 if end_x > cx else -15)
+                self.canvas.create_text(label_x, end_y,
+                                       text=f"{frequencies[i]:.0f}Hz",
+                                       fill=color, font=('Courier', 8))
+        
+        # Draw golden spiral at center (decorative)
+        self._draw_golden_spiral(cx, branch_origin_y - 50)
+        
+        # Title
+        mode = self.harmonic_mode.get()
+        self.canvas.create_text(200, 20, 
+                               text=f"Harmonic Tree ({mode.capitalize()} ratios)",
+                               fill='#ffd700', font=('Helvetica', 12, 'bold'))
+    
+    def _draw_golden_spiral(self, cx, cy):
+        """Draw a small golden spiral at the center"""
+        points = []
+        scale = 8
+        for i in range(50):
+            angle = i * GOLDEN_ANGLE_RAD * 0.3
+            r = scale * np.sqrt(i * 0.5)
+            x = cx + r * np.cos(angle)
+            y = cy + r * np.sin(angle)
+            points.extend([x, y])
+        
+        if len(points) >= 4:
+            self.canvas.create_line(points, fill='#ffd700', width=1, smooth=True)
+    
+    def _update_info(self):
+        """Update the info panel with current harmonics"""
+        self.info_text.config(state='normal')
+        self.info_text.delete('1.0', tk.END)
+        
+        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        
+        mode = self.harmonic_mode.get()
+        decay = self.amplitude_decay.get()
+        
+        self.info_text.insert('end', f"═══ HARMONIC TREE ({mode}/{decay}) ═══\n\n")
+        self.info_text.insert('end', f"{'#':<3} {'Freq (Hz)':<10} {'Amp':<8} {'Phase°':<10} {'Pan':<6}\n")
+        self.info_text.insert('end', "─" * 42 + "\n")
+        
+        for i, (f, a, p, pos) in enumerate(zip(frequencies, amplitudes, phases, positions)):
+            phase_deg = np.degrees(p)
+            pan_str = f"{pos:+.2f}" if abs(pos) > 0.01 else "C"
+            name = "Fund" if i == 0 else f"H{i}"
+            self.info_text.insert('end', 
+                f"{name:<3} {f:<10.1f} {a:<8.3f} {phase_deg:<10.1f} {pan_str:<6}\n")
+        
+        self.info_text.config(state='disabled')
+    
+    def _on_param_change(self, *args):
+        """Handle parameter changes - update visualization and audio"""
+        try:
+            self._draw_tree()
+            self._update_info()
+            
+            # If playing, update audio in real-time
+            if self.audio.is_playing():
+                self._update_audio()
+        except:
+            pass
+    
+    def _update_audio(self):
+        """Update audio parameters in real-time"""
+        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        self.audio.set_spectral_params(frequencies, amplitudes, phases, positions)
+    
+    def _play(self):
+        """Start playing the harmonic tree"""
+        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        amp = self.amplitude.get()
+        
+        # Start continuous streaming
+        self.audio.start_spectral(frequencies, amplitudes, phases, positions,
+                                  master_amplitude=amp)
+        
+        self.play_btn.config(state='disabled')
+        self.stop_btn.config(state='normal')
+        
+        fund = self.fundamental.get()
+        n = self.num_harmonics.get()
+        self.status_var.set(f"🔊 Playing: {fund:.1f} Hz + {n} harmonics")
+    
+    def _stop(self):
+        """Stop playback"""
+        self.audio.stop()
+        self.play_btn.config(state='normal')
+        self.stop_btn.config(state='disabled')
+        self.status_var.set("Configure harmonics and press PLAY")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1701,10 +2059,12 @@ class GoldenSoundStudio:
         self.binaural_tab = BinauralTab(self.notebook, self.audio)
         self.spectral_tab = SpectralTab(self.notebook, self.audio)
         self.molecular_tab = MolecularTab(self.notebook, self.audio)
+        self.harmonic_tree_tab = HarmonicTreeTab(self.notebook, self.audio)
         
         self.notebook.add(self.binaural_tab.frame, text="🎵 Binaural Beats")
         self.notebook.add(self.spectral_tab.frame, text="⚛️ Spectral Sound")
         self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
+        self.notebook.add(self.harmonic_tree_tab.frame, text="🌳 Harmonic Tree")
         
         # Status bar
         status_frame = tk.Frame(self.root, bg='#1a1a2e')
@@ -1736,9 +2096,12 @@ class GoldenSoundStudio:
 ║   🎵 Tab 1: Binaural Beats - Phase angle control, sacred geometry           ║
 ║   ⚛️ Tab 2: Spectral Sound - Play atomic elements (H, He, O, Na...)         ║
 ║   🧪 Tab 3: Molecular Sound - Play molecules (H₂O, CO₂, CH₄...)             ║
+║   🌳 Tab 4: Harmonic Tree - Fundamental + Fibonacci harmonics               ║
 ║                                                                              ║
-║   Bond angles become phase differences!                                      ║
-║   Water (104.5°), Methane (109.5°), Ammonia (107.3°)...                     ║
+║   Based on natural phyllotaxis patterns:                                     ║
+║   • Harmonics at Fibonacci ratios (2f, 3f, 5f, 8f, 13f)                     ║
+║   • Phases rotate by Golden Angle (137.5°) like sunflower seeds             ║
+║   • Amplitudes decay by φ⁻ⁿ (natural growth pattern)                        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
         """)
         self.root.mainloop()
