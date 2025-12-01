@@ -19,6 +19,7 @@ import threading
 import subprocess
 import sys
 import os
+import time
 from typing import Optional, Tuple
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1645,18 +1646,25 @@ class MolecularTab:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4: HARMONIC TREE
+# TAB 4: HARMONIC TREE - THERAPEUTIC GROWTH MODE
 # ══════════════════════════════════════════════════════════════════════════════
 
 class HarmonicTreeTab:
     """
-    Generate fundamental + harmonics visualized as a tree.
+    Generate fundamental + harmonics visualized as a tree with therapeutic growth mode.
     
     Based on natural phyllotaxis patterns:
     - Trunk = Fundamental frequency
     - Branches = Harmonics at Fibonacci ratios (2f, 3f, 5f, 8f, 13f)
     - Branch thickness = Amplitude (φ⁻ⁿ decay)
     - Branch rotation = Phase (cumulative golden angle: n × 137.5°)
+    
+    Therapeutic Growth Mode:
+    - Harmonics emerge progressively over configurable duration (10s to 1hr)
+    - Golden-ratio timed cadences: each harmonic emerges at φ⁻ⁿ × duration
+    - Each harmonic fades in with golden envelope
+    - Phases evolve (rotate) during growth, simulating tree development
+    - 10fps animation (can be disabled for CPU saving)
     
     "The universe grows in spirals - so does sound"
     """
@@ -1666,13 +1674,26 @@ class HarmonicTreeTab:
         self.audio = audio_engine
         self.frame = ttk.Frame(parent)
         
-        # State
+        # State - basic
         self.fundamental = tk.DoubleVar(value=432.0)  # Base frequency
         self.num_harmonics = tk.IntVar(value=5)       # Number of harmonics
         self.harmonic_mode = tk.StringVar(value="fibonacci")  # fibonacci or integer
         self.amplitude_decay = tk.StringVar(value="phi")  # phi, sqrt, linear
         self.amplitude = tk.DoubleVar(value=0.7)
         self.stereo_spread = tk.DoubleVar(value=0.5)  # 0 = mono, 1 = full spread
+        
+        # State - growth mode
+        self.growth_mode = tk.BooleanVar(value=True)  # True = progressive, False = instant
+        self.growth_duration = tk.IntVar(value=60)    # Duration in seconds
+        self.animation_enabled = tk.BooleanVar(value=True)  # 10fps animation toggle
+        self.phase_evolution = tk.BooleanVar(value=True)  # Phases rotate during growth
+        
+        # Growth state tracking
+        self._growth_timer = None
+        self._growth_start_time = None
+        self._current_growth_level = [0.0] * 14  # Per-harmonic growth level (0-1)
+        self._is_growing = False
+        self._animation_after_id = None
         
         self._setup_ui()
     
@@ -1732,6 +1753,61 @@ class HarmonicTreeTab:
         ttk.Label(phase_info, text="n=1: 137.5°, n=2: 275°, n=3: 412.5° (≡52.5°)...",
                  font=('Courier', 9), foreground='#888').pack()
         
+        # ═══════════════════════════════════════════════════════════════════
+        # THERAPEUTIC GROWTH MODE
+        # ═══════════════════════════════════════════════════════════════════
+        growth_frame = ttk.LabelFrame(left_frame, text="🌱 Therapeutic Growth Mode", padding=5)
+        growth_frame.pack(fill='x', pady=5)
+        
+        # Growth mode toggle
+        growth_toggle = ttk.Frame(growth_frame)
+        growth_toggle.pack(fill='x', pady=3)
+        ttk.Checkbutton(growth_toggle, text="Progressive Growth (harmonics emerge over time)", 
+                       variable=self.growth_mode).pack(side='left')
+        
+        # Duration selector
+        duration_row = ttk.Frame(growth_frame)
+        duration_row.pack(fill='x', pady=3)
+        ttk.Label(duration_row, text="Duration:").pack(side='left')
+        
+        # Duration presets
+        duration_presets = [
+            ("10s", 10), ("30s", 30), ("1m", 60), ("5m", 300),
+            ("10m", 600), ("30m", 1800), ("1h", 3600)
+        ]
+        for name, secs in duration_presets:
+            ttk.Button(duration_row, text=name, width=4,
+                      command=lambda s=secs: self.growth_duration.set(s)).pack(side='left', padx=1)
+        
+        # Custom duration entry
+        custom_row = ttk.Frame(growth_frame)
+        custom_row.pack(fill='x', pady=2)
+        ttk.Label(custom_row, text="Custom (sec):").pack(side='left')
+        ttk.Entry(custom_row, textvariable=self.growth_duration, width=6).pack(side='left', padx=5)
+        self.duration_label = ttk.Label(custom_row, text="", font=('Courier', 9))
+        self.duration_label.pack(side='left', padx=5)
+        self._update_duration_label()
+        
+        # Animation toggle
+        anim_row = ttk.Frame(growth_frame)
+        anim_row.pack(fill='x', pady=3)
+        ttk.Checkbutton(anim_row, text="Animate tree (10 fps)", 
+                       variable=self.animation_enabled).pack(side='left')
+        ttk.Label(anim_row, text="(disable to save CPU)", 
+                 font=('Courier', 8), foreground='#888').pack(side='left', padx=5)
+        
+        # Phase evolution toggle
+        phase_row = ttk.Frame(growth_frame)
+        phase_row.pack(fill='x', pady=3)
+        ttk.Checkbutton(phase_row, text="Evolve phases during growth (rotating branches)", 
+                       variable=self.phase_evolution).pack(side='left')
+        
+        # Growth progress bar
+        self.growth_progress = ttk.Progressbar(growth_frame, mode='determinate', length=250)
+        self.growth_progress.pack(fill='x', pady=5)
+        self.growth_status = ttk.Label(growth_frame, text="", font=('Courier', 9))
+        self.growth_status.pack()
+        
         # Master controls
         master_frame = ttk.LabelFrame(left_frame, text="🎚️ Master", padding=5)
         master_frame.pack(fill='x', pady=5)
@@ -1752,7 +1828,7 @@ class HarmonicTreeTab:
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill='x', pady=10)
         
-        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY", command=self._play)
+        self.play_btn = ttk.Button(btn_frame, text="▶ GROW & PLAY", command=self._play)
         self.play_btn.pack(side='left', padx=5)
         
         self.stop_btn = ttk.Button(btn_frame, text="⏹ STOP", command=self._stop, state='disabled')
@@ -1770,7 +1846,7 @@ class HarmonicTreeTab:
                                 fg='#00ff88', font=('Courier', 9), state='disabled')
         self.info_text.pack(fill='x')
         
-        self.status_var = tk.StringVar(value="Configure harmonics and press PLAY")
+        self.status_var = tk.StringVar(value="Configure harmonics and press GROW & PLAY")
         ttk.Label(right_frame, textvariable=self.status_var).pack()
         
         # Bind updates
@@ -1780,13 +1856,88 @@ class HarmonicTreeTab:
         self.amplitude_decay.trace_add('write', self._on_param_change)
         self.amplitude.trace_add('write', self._on_param_change)
         self.stereo_spread.trace_add('write', self._on_param_change)
+        self.growth_duration.trace_add('write', lambda *a: self._update_duration_label())
         
         # Initial draw
         self._draw_tree()
     
-    def _calculate_harmonics(self):
+    def _update_duration_label(self):
+        """Update the duration label with human-readable format"""
+        try:
+            secs = self.growth_duration.get()
+            if secs >= 3600:
+                label = f"= {secs/3600:.1f} hours"
+            elif secs >= 60:
+                label = f"= {secs/60:.1f} minutes"
+            else:
+                label = f"= {secs} seconds"
+            self.duration_label.config(text=label)
+        except:
+            pass
+    
+    def _calculate_growth_schedule(self):
+        """
+        Calculate when each harmonic should emerge using golden ratio cadences.
+        
+        Returns list of (harmonic_index, emergence_time_fraction) tuples.
+        
+        Pattern: Fundamental at t=0, then harmonics emerge at cumulative φ⁻ⁿ intervals
+        This creates a natural acceleration pattern like tree growth.
+        """
+        n = self.num_harmonics.get() + 1  # Include fundamental
+        
+        # Emergence times using golden ratio
+        # Fundamental (index 0) starts immediately
+        # Harmonic 1 emerges at φ⁻¹ ≈ 0.618 of remaining time
+        # Harmonic 2 emerges at φ⁻² ≈ 0.382 of remaining time after H1
+        # etc.
+        
+        schedule = [(0, 0.0)]  # Fundamental at t=0
+        
+        # Cumulative golden ratio for emergence times
+        cumulative = 0.0
+        for i in range(1, n):
+            # Each harmonic emerges after φ⁻ⁿ fraction of total duration
+            emergence = cumulative + (PHI_CONJUGATE ** i) * 0.7  # Scale to leave room
+            emergence = min(emergence, 0.95)  # Cap at 95%
+            schedule.append((i, emergence))
+            cumulative = emergence
+        
+        return schedule
+    
+    def _calculate_fade_envelope(self, elapsed_fraction, emergence_fraction, harmonic_index):
+        """
+        Calculate golden-ratio fade envelope for a harmonic.
+        
+        Based on natural growth patterns:
+        - Fade-in duration = φ⁻ⁿ × 0.2 (quicker for later harmonics)
+        - Uses smooth cosine curve
+        
+        Returns amplitude multiplier (0.0 to 1.0)
+        """
+        if elapsed_fraction < emergence_fraction:
+            return 0.0  # Not yet emerged
+        
+        time_since_emergence = elapsed_fraction - emergence_fraction
+        
+        # Fade-in duration: shorter for later harmonics (golden decay)
+        fade_in_duration = (PHI_CONJUGATE ** harmonic_index) * 0.15 + 0.05
+        
+        if time_since_emergence >= fade_in_duration:
+            return 1.0  # Fully grown
+        
+        # Smooth cosine fade-in (more natural than linear)
+        progress = time_since_emergence / fade_in_duration
+        # Cosine easing: slow start, fast middle, slow end
+        return 0.5 * (1 - np.cos(np.pi * progress))
+    
+    def _calculate_harmonics(self, apply_growth=False, elapsed_fraction=0.0):
         """
         Calculate harmonic frequencies, amplitudes, phases, and stereo positions.
+        
+        Args:
+            apply_growth: If True, modulate amplitudes based on growth state
+            elapsed_fraction: Current progress through growth cycle (0.0 to 1.0)
         
         Returns:
             (frequencies, amplitudes, phases, positions)
@@ -1825,12 +1976,33 @@ class HarmonicTreeTab:
             amplitudes = [1.0 / (i + 1) for i in range(total)]
         
         # ═══════════════════════════════════════════════════════════════════
+        # GROWTH MODE: Progressive amplitude envelope
+        # ═══════════════════════════════════════════════════════════════════
+        
+        if apply_growth and self.growth_mode.get():
+            schedule = self._calculate_growth_schedule()
+            for i in range(total):
+                emergence = schedule[i][1] if i < len(schedule) else 0.95
+                envelope = self._calculate_fade_envelope(elapsed_fraction, emergence, i)
+                amplitudes[i] *= envelope
+                self._current_growth_level[i] = envelope
+        
+        # ═══════════════════════════════════════════════════════════════════
         # PHASES: Cumulative Golden Angle (phyllotaxis pattern)
         # ═══════════════════════════════════════════════════════════════════
         
         # Each harmonic is rotated by n × 137.5°
         # This is the pattern found in sunflower seeds!
-        phases = [(i * GOLDEN_ANGLE_RAD) % (2 * np.pi) for i in range(total)]
+        base_phases = [(i * GOLDEN_ANGLE_RAD) % (2 * np.pi) for i in range(total)]
+        
+        # Phase evolution during growth (rotating branches)
+        if apply_growth and self.phase_evolution.get():
+            # Rotate phases over time - slower for later harmonics
+            phase_offset = elapsed_fraction * 2 * np.pi
+            phases = [(base_phases[i] + phase_offset * PHI_CONJUGATE ** i) % (2 * np.pi) 
+                     for i in range(total)]
+        else:
+            phases = base_phases
         
         # ═══════════════════════════════════════════════════════════════════
         # STEREO: Spiral positioning based on golden angle
@@ -1841,26 +2013,32 @@ class HarmonicTreeTab:
         for i in range(total):
             # Use golden angle for stereo position
             angle = i * GOLDEN_ANGLE_RAD
+            if apply_growth and self.phase_evolution.get():
+                angle += elapsed_fraction * np.pi * 0.5  # Subtle stereo movement
             pan = np.sin(angle) * spread  # -spread to +spread
             positions.append(pan)
         
         return frequencies, amplitudes, phases, positions
     
-    def _draw_tree(self):
-        """Draw the harmonic tree visualization"""
+    def _draw_tree(self, elapsed_fraction=0.0):
+        """Draw the harmonic tree visualization with growth state"""
         self.canvas.delete('all')
         
-        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        is_growing = self._is_growing and self.growth_mode.get()
+        frequencies, amplitudes, phases, positions = self._calculate_harmonics(
+            apply_growth=is_growing, elapsed_fraction=elapsed_fraction)
         
         # Canvas center
         cx, cy = 200, 380
         
-        # Draw trunk (fundamental)
-        trunk_height = 100
-        trunk_width = 15 * amplitudes[0]  # Trunk thickness from amplitude
+        # Draw trunk (fundamental) - grows from seed
+        trunk_growth = self._current_growth_level[0] if is_growing else 1.0
+        trunk_height = 100 * trunk_growth
+        trunk_width = max(2, 15 * amplitudes[0] * trunk_growth)
         
-        self.canvas.create_line(cx, cy, cx, cy - trunk_height, 
-                               fill='#8B4513', width=trunk_width)
+        if trunk_height > 0:
+            self.canvas.create_line(cx, cy, cx, cy - trunk_height, 
+                                   fill='#8B4513', width=trunk_width)
         
         # Label trunk
         self.canvas.create_text(cx, cy + 15, text=f"{frequencies[0]:.1f} Hz",
@@ -1875,21 +2053,27 @@ class HarmonicTreeTab:
                   '#00ced1', '#ffa07a', '#98fb98']
         
         for i in range(1, len(frequencies)):
+            growth = self._current_growth_level[i] if is_growing else 1.0
+            
+            # Skip if not yet emerged
+            if growth < 0.01:
+                continue
+            
             # Phase determines angle from trunk
             phase_deg = np.degrees(phases[i])
             angle_from_vertical = (phase_deg % 360) - 180  # Center around vertical
             
-            # Branch length proportional to amplitude
-            branch_length = 80 * amplitudes[i] + 30
+            # Branch length proportional to amplitude AND growth
+            branch_length = (80 * amplitudes[0] + 30) * growth  # Use base amplitude
             
-            # Branch width proportional to amplitude
-            branch_width = 10 * amplitudes[i] + 2
+            # Branch width proportional to amplitude AND growth
+            branch_width = max(1, (10 * amplitudes[0] + 2) * growth)
             
             # Calculate branch endpoint
             angle_rad = np.radians(angle_from_vertical)
             
             # Y offset for each harmonic (stack them up)
-            y_offset = i * 25
+            y_offset = i * 25 * growth  # Grows upward
             origin_y = branch_origin_y - y_offset
             
             end_x = cx + branch_length * np.sin(angle_rad)
@@ -1897,38 +2081,55 @@ class HarmonicTreeTab:
             
             color = colors[(i - 1) % len(colors)]
             
+            # Fade color during emergence
+            if growth < 1.0:
+                # Blend with dark background
+                r = int(int(color[1:3], 16) * growth)
+                g = int(int(color[3:5], 16) * growth)
+                b = int(int(color[5:7], 16) * growth)
+                color = f'#{r:02x}{g:02x}{b:02x}'
+            
             # Draw branch
             self.canvas.create_line(cx, origin_y, end_x, end_y,
                                    fill=color, width=branch_width,
                                    capstyle='round')
             
-            # Draw leaf/node at end
-            node_size = 5 + amplitudes[i] * 10
-            self.canvas.create_oval(end_x - node_size, end_y - node_size,
-                                   end_x + node_size, end_y + node_size,
-                                   fill=color, outline='white')
+            # Draw leaf/node at end (grows with branch)
+            node_size = (5 + amplitudes[0] * 10) * growth
+            if node_size >= 1:
+                self.canvas.create_oval(end_x - node_size, end_y - node_size,
+                                       end_x + node_size, end_y + node_size,
+                                       fill=color, outline='white' if growth > 0.8 else '')
             
-            # Label
-            if i <= 6:  # Only label first few
+            # Label (only when mostly grown)
+            if i <= 6 and growth > 0.6:
                 label_x = end_x + (15 if end_x > cx else -15)
+                alpha = int(255 * growth)
                 self.canvas.create_text(label_x, end_y,
                                        text=f"{frequencies[i]:.0f}Hz",
-                                       fill=color, font=('Courier', 8))
+                                       fill=colors[(i - 1) % len(colors)], font=('Courier', 8))
         
-        # Draw golden spiral at center (decorative)
-        self._draw_golden_spiral(cx, branch_origin_y - 50)
+        # Draw golden spiral at center (decorative) - also grows
+        if trunk_height > 50:
+            self._draw_golden_spiral(cx, branch_origin_y - 50, growth=elapsed_fraction if is_growing else 1.0)
         
-        # Title
+        # Title with growth status
         mode = self.harmonic_mode.get()
+        if is_growing:
+            percent = int(elapsed_fraction * 100)
+            title = f"Growing... {percent}% ({mode.capitalize()} ratios)"
+        else:
+            title = f"Harmonic Tree ({mode.capitalize()} ratios)"
         self.canvas.create_text(200, 20, 
-                               text=f"Harmonic Tree ({mode.capitalize()} ratios)",
+                               text=title,
                                fill='#ffd700', font=('Helvetica', 12, 'bold'))
     
-    def _draw_golden_spiral(self, cx, cy):
+    def _draw_golden_spiral(self, cx, cy, growth=1.0):
         """Draw a small golden spiral at the center"""
         points = []
-        scale = 8
-        for i in range(50):
+        scale = 8 * growth
+        num_points = int(50 * growth)
+        for i in range(max(2, num_points)):
             angle = i * GOLDEN_ANGLE_RAD * 0.3
             r = scale * np.sqrt(i * 0.5)
             x = cx + r * np.cos(angle)
@@ -1938,68 +2139,167 @@ class HarmonicTreeTab:
         if len(points) >= 4:
             self.canvas.create_line(points, fill='#ffd700', width=1, smooth=True)
     
-    def _update_info(self):
+    def _update_info(self, elapsed_fraction=0.0):
         """Update the info panel with current harmonics"""
         self.info_text.config(state='normal')
         self.info_text.delete('1.0', tk.END)
         
-        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        is_growing = self._is_growing and self.growth_mode.get()
+        frequencies, amplitudes, phases, positions = self._calculate_harmonics(
+            apply_growth=is_growing, elapsed_fraction=elapsed_fraction)
         
         mode = self.harmonic_mode.get()
         decay = self.amplitude_decay.get()
         
-        self.info_text.insert('end', f"═══ HARMONIC TREE ({mode}/{decay}) ═══\n\n")
-        self.info_text.insert('end', f"{'#':<3} {'Freq (Hz)':<10} {'Amp':<8} {'Phase°':<10} {'Pan':<6}\n")
-        self.info_text.insert('end', "─" * 42 + "\n")
+        if is_growing:
+            self.info_text.insert('end', f"═══ HARMONIC TREE (Growing {int(elapsed_fraction*100)}%) ═══\n\n")
+        else:
+            self.info_text.insert('end', f"═══ HARMONIC TREE ({mode}/{decay}) ═══\n\n")
+        
+        self.info_text.insert('end', f"{'#':<3} {'Freq (Hz)':<10} {'Amp':<8} {'Phase°':<10} {'Growth':<8}\n")
+        self.info_text.insert('end', "─" * 45 + "\n")
         
         for i, (f, a, p, pos) in enumerate(zip(frequencies, amplitudes, phases, positions)):
             phase_deg = np.degrees(p)
-            pan_str = f"{pos:+.2f}" if abs(pos) > 0.01 else "C"
+            growth = self._current_growth_level[i] if is_growing else 1.0
+            growth_str = f"{growth*100:.0f}%" if is_growing else "100%"
             name = "Fund" if i == 0 else f"H{i}"
-            self.info_text.insert('end', 
-                f"{name:<3} {f:<10.1f} {a:<8.3f} {phase_deg:<10.1f} {pan_str:<6}\n")
+            
+            # Show emerged vs not-emerged
+            if growth < 0.01:
+                self.info_text.insert('end', f"{name:<3} {'(emerging...)':<38}\n")
+            else:
+                self.info_text.insert('end', 
+                    f"{name:<3} {f:<10.1f} {a:<8.3f} {phase_deg:<10.1f} {growth_str:<8}\n")
         
         self.info_text.config(state='disabled')
     
     def _on_param_change(self, *args):
         """Handle parameter changes - update visualization and audio"""
         try:
-            self._draw_tree()
-            self._update_info()
+            elapsed_fraction = 0.0
+            if self._is_growing and self._growth_start_time:
+                elapsed = time.time() - self._growth_start_time
+                duration = self.growth_duration.get()
+                elapsed_fraction = min(elapsed / duration, 1.0)
+            
+            self._draw_tree(elapsed_fraction)
+            self._update_info(elapsed_fraction)
             
             # If playing, update audio in real-time
             if self.audio.is_playing():
-                self._update_audio()
+                self._update_audio(elapsed_fraction)
         except:
             pass
     
-    def _update_audio(self):
+    def _update_audio(self, elapsed_fraction=0.0):
         """Update audio parameters in real-time"""
-        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        is_growing = self._is_growing and self.growth_mode.get()
+        frequencies, amplitudes, phases, positions = self._calculate_harmonics(
+            apply_growth=is_growing, elapsed_fraction=elapsed_fraction)
         self.audio.set_spectral_params(frequencies, amplitudes, phases, positions)
     
     def _play(self):
-        """Start playing the harmonic tree"""
-        frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+        """Start playing the harmonic tree with optional growth mode"""
         amp = self.amplitude.get()
         
-        # Start continuous streaming
-        self.audio.start_spectral(frequencies, amplitudes, phases, positions,
-                                  master_amplitude=amp)
+        # Reset growth state
+        self._current_growth_level = [0.0] * 14
+        self._is_growing = self.growth_mode.get()
+        self._growth_start_time = time.time()
+        
+        if self._is_growing:
+            # Start with only fundamental, harmonics will emerge
+            self._current_growth_level[0] = 1.0  # Fundamental starts immediately
+            frequencies, amplitudes, phases, positions = self._calculate_harmonics(
+                apply_growth=True, elapsed_fraction=0.0)
+            
+            # Start audio with initial state
+            self.audio.start_spectral(frequencies, amplitudes, phases, positions,
+                                      master_amplitude=amp)
+            
+            # Start growth timer
+            self._growth_callback()
+            
+            duration = self.growth_duration.get()
+            self.status_var.set(f"🌱 Growing over {duration}s - Tree emerging...")
+        else:
+            # Instant mode - all harmonics at once
+            for i in range(14):
+                self._current_growth_level[i] = 1.0
+            frequencies, amplitudes, phases, positions = self._calculate_harmonics()
+            
+            self.audio.start_spectral(frequencies, amplitudes, phases, positions,
+                                      master_amplitude=amp)
+            
+            fund = self.fundamental.get()
+            n = self.num_harmonics.get()
+            self.status_var.set(f"🔊 Playing: {fund:.1f} Hz + {n} harmonics")
         
         self.play_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
+    
+    def _growth_callback(self):
+        """Timer callback for growth animation - runs at 10fps"""
+        if not self._is_growing or not self.audio.is_playing():
+            return
         
-        fund = self.fundamental.get()
-        n = self.num_harmonics.get()
-        self.status_var.set(f"🔊 Playing: {fund:.1f} Hz + {n} harmonics")
+        elapsed = time.time() - self._growth_start_time
+        duration = self.growth_duration.get()
+        elapsed_fraction = min(elapsed / duration, 1.0)
+        
+        # Update progress bar
+        self.growth_progress['value'] = elapsed_fraction * 100
+        
+        # Format elapsed time
+        elapsed_min, elapsed_sec = divmod(int(elapsed), 60)
+        total_min, total_sec = divmod(duration, 60)
+        self.growth_status.config(text=f"{elapsed_min:02d}:{elapsed_sec:02d} / {total_min:02d}:{total_sec:02d}")
+        
+        # Update audio with new growth state
+        self._update_audio(elapsed_fraction)
+        
+        # Update visualization (if animation enabled)
+        if self.animation_enabled.get():
+            self._draw_tree(elapsed_fraction)
+            self._update_info(elapsed_fraction)
+        
+        if elapsed_fraction >= 1.0:
+            # Growth complete
+            self._is_growing = False
+            self.status_var.set(f"🌳 Fully grown - {self.num_harmonics.get()+1} harmonics playing")
+            self.growth_status.config(text="Growth complete ✓")
+            # Set all growth levels to 1.0
+            for i in range(14):
+                self._current_growth_level[i] = 1.0
+            # Final update
+            self._draw_tree(1.0)
+            self._update_info(1.0)
+            return
+        
+        # Schedule next frame (100ms = 10fps)
+        self._animation_after_id = self.frame.after(100, self._growth_callback)
     
     def _stop(self):
         """Stop playback"""
+        self._is_growing = False
+        if self._animation_after_id:
+            self.frame.after_cancel(self._animation_after_id)
+            self._animation_after_id = None
+        
         self.audio.stop()
         self.play_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
-        self.status_var.set("Configure harmonics and press PLAY")
+        self.growth_progress['value'] = 0
+        self.growth_status.config(text="")
+        
+        # Reset growth levels for display
+        for i in range(14):
+            self._current_growth_level[i] = 1.0
+        self._draw_tree()
+        self._update_info()
+        
+        self.status_var.set("Configure harmonics and press GROW & PLAY")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
