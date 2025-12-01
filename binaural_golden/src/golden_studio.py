@@ -434,10 +434,49 @@ class BinauralTab:
         self._update_frequencies()  # Initial sync
     
     def _setup_ui(self):
-        """Build the UI"""
-        # Left panel - Controls
-        left_frame = ttk.LabelFrame(self.frame, text="🎛️ Controls", padding=10)
-        left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        """Build the UI with scrollable controls panel"""
+        # ═══════════════════════════════════════════════════════════════════
+        # LEFT PANEL WITH SCROLLBAR
+        # ═══════════════════════════════════════════════════════════════════
+        left_container = ttk.Frame(self.frame)
+        left_container.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        
+        # Create canvas for scrolling
+        self._scroll_canvas = tk.Canvas(left_container, highlightthickness=0, width=420)
+        scrollbar = ttk.Scrollbar(left_container, orient='vertical', command=self._scroll_canvas.yview)
+        
+        # Scrollable frame inside canvas
+        left_frame = ttk.LabelFrame(self._scroll_canvas, text="🎛️ Controls", padding=10)
+        
+        # Configure scrolling
+        self._scroll_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        scrollbar.pack(side='right', fill='y')
+        self._scroll_canvas.pack(side='left', fill='both', expand=True)
+        
+        # Create window inside canvas for the frame
+        self._canvas_window = self._scroll_canvas.create_window((0, 0), window=left_frame, anchor='nw')
+        
+        # Bind events for scroll region update
+        def _configure_scroll_region(event):
+            self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        
+        def _configure_canvas_width(event):
+            self._scroll_canvas.itemconfig(self._canvas_window, width=event.width)
+        
+        left_frame.bind('<Configure>', _configure_scroll_region)
+        self._scroll_canvas.bind('<Configure>', _configure_canvas_width)
+        
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            self._scroll_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        self._scroll_canvas.bind_all('<MouseWheel>', _on_mousewheel)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # CONTROLS CONTENT
+        # ═══════════════════════════════════════════════════════════════════
         
         # === BATTIMENTI (Beat Frequency) - MAIN CONTROL ===
         beat_frame = ttk.LabelFrame(left_frame, text="🌀 BATTIMENTI (Beat Frequency)", padding=10)
