@@ -484,6 +484,74 @@ class BinauralTab:
                            command=lambda b=beat: self._set_beat_preset(b))
             btn.pack(side='left', padx=2)
         
+        # ═══════════════════════════════════════════════════════════════════
+        # MUSICAL INTERVALS - Root + Interval shortcuts
+        # ═══════════════════════════════════════════════════════════════════
+        interval_frame = ttk.LabelFrame(left_frame, text="🎼 Musical Intervals (L=Root, R=Interval)", padding=5)
+        interval_frame.pack(fill='x', pady=5)
+        
+        # Musical interval ratios (just intonation)
+        # These create consonant relationships between L and R
+        intervals_row1 = ttk.Frame(interval_frame)
+        intervals_row1.pack(fill='x', pady=2)
+        intervals_row2 = ttk.Frame(interval_frame)
+        intervals_row2.pack(fill='x', pady=2)
+        
+        musical_intervals = [
+            # Row 1: Basic intervals
+            ("Unison", 1, 1),        # 1:1
+            ("m2", 16, 15),          # Minor 2nd
+            ("M2", 9, 8),            # Major 2nd  
+            ("m3", 6, 5),            # Minor 3rd
+            ("M3", 5, 4),            # Major 3rd (just)
+            ("P4", 4, 3),            # Perfect 4th
+            # Row 2: Upper intervals
+            ("Tritone", 45, 32),     # Tritone
+            ("P5", 3, 2),            # Perfect 5th
+            ("m6", 8, 5),            # Minor 6th
+            ("M6", 5, 3),            # Major 6th
+            ("m7", 9, 5),            # Minor 7th
+            ("Octave", 2, 1),        # Octave
+        ]
+        
+        for i, (name, num, den) in enumerate(musical_intervals[:6]):
+            btn = ttk.Button(intervals_row1, text=name, width=7,
+                           command=lambda n=num, d=den: self._set_interval(n, d))
+            btn.pack(side='left', padx=1)
+        
+        for i, (name, num, den) in enumerate(musical_intervals[6:]):
+            btn = ttk.Button(intervals_row2, text=name, width=7,
+                           command=lambda n=num, d=den: self._set_interval(n, d))
+            btn.pack(side='left', padx=1)
+        
+        # Preset save/load section
+        preset_save_frame = ttk.LabelFrame(left_frame, text="💾 Presets", padding=5)
+        preset_save_frame.pack(fill='x', pady=5)
+        
+        preset_btn_row = ttk.Frame(preset_save_frame)
+        preset_btn_row.pack(fill='x', pady=2)
+        
+        self.preset_name_var = tk.StringVar(value="my_preset")
+        ttk.Entry(preset_btn_row, textvariable=self.preset_name_var, width=15).pack(side='left', padx=2)
+        ttk.Button(preset_btn_row, text="Save", command=self._save_preset).pack(side='left', padx=2)
+        ttk.Button(preset_btn_row, text="Load", command=self._load_preset).pack(side='left', padx=2)
+        
+        # Quick preset buttons
+        quick_preset_row = ttk.Frame(preset_save_frame)
+        quick_preset_row.pack(fill='x', pady=2)
+        
+        quick_presets = [
+            ("Meditation", 432, 7.83, 137.5),   # Schumann + Golden angle
+            ("Focus", 440, 14, 108),             # Beta + Pentagon angle
+            ("Sleep", 396, 3, 51.84),            # Deep delta + Pyramid
+            ("Healing", 528, 8, 137.5),          # Solfeggio + Golden
+        ]
+        
+        for name, base, beat, phase in quick_presets:
+            btn = ttk.Button(quick_preset_row, text=name, width=10,
+                           command=lambda b=base, bt=beat, p=phase: self._apply_quick_preset(b, bt, p))
+            btn.pack(side='left', padx=1)
+        
         # Calculated frequencies display (read-only when in beat mode)
         calc_frame = ttk.LabelFrame(left_frame, text="📊 Resulting Frequencies", padding=5)
         calc_frame.pack(fill='x', pady=5)
@@ -599,6 +667,83 @@ class BinauralTab:
         self.beat_freq.set(beat)
         self._update_frequencies()
     
+    def _set_interval(self, numerator: int, denominator: int):
+        """Set musical interval: Right = Left × (num/den)"""
+        self.link_mode.set("manual")
+        base = self.base_freq.get()
+        self.freq_left.set(base)
+        self.freq_right.set(base * numerator / denominator)
+        self._update_frequencies()
+        
+        # Calculate interval name for display
+        ratio = numerator / denominator
+        cents = 1200 * np.log2(ratio)
+        self.info_var.set(f"Interval: {numerator}:{denominator} = {ratio:.4f} ({cents:.1f} cents)")
+    
+    def _apply_quick_preset(self, base: float, beat: float, phase: float):
+        """Apply a quick preset with base, beat, and phase"""
+        self.link_mode.set("beat")
+        self.base_freq.set(base)
+        self.beat_freq.set(beat)
+        self.phase_angle.set(phase)
+        self._update_frequencies()
+    
+    def _save_preset(self):
+        """Save current settings to a preset file"""
+        import json
+        name = self.preset_name_var.get().strip()
+        if not name:
+            return
+        
+        preset = {
+            'base_freq': self.base_freq.get(),
+            'beat_freq': self.beat_freq.get(),
+            'freq_left': self.freq_left.get(),
+            'freq_right': self.freq_right.get(),
+            'phase_angle': self.phase_angle.get(),
+            'amplitude': self.amplitude.get(),
+            'waveform': self.waveform.get(),
+            'link_mode': self.link_mode.get(),
+        }
+        
+        preset_dir = os.path.join(os.path.dirname(__file__), 'presets')
+        os.makedirs(preset_dir, exist_ok=True)
+        
+        filepath = os.path.join(preset_dir, f"{name}.json")
+        with open(filepath, 'w') as f:
+            json.dump(preset, f, indent=2)
+        
+        self.info_var.set(f"💾 Saved: {name}.json")
+    
+    def _load_preset(self):
+        """Load settings from a preset file"""
+        import json
+        name = self.preset_name_var.get().strip()
+        if not name:
+            return
+        
+        preset_dir = os.path.join(os.path.dirname(__file__), 'presets')
+        filepath = os.path.join(preset_dir, f"{name}.json")
+        
+        if not os.path.exists(filepath):
+            self.info_var.set(f"⚠️ Preset not found: {name}")
+            return
+        
+        with open(filepath, 'r') as f:
+            preset = json.load(f)
+        
+        self.base_freq.set(preset.get('base_freq', 432))
+        self.beat_freq.set(preset.get('beat_freq', 8))
+        self.freq_left.set(preset.get('freq_left', 432))
+        self.freq_right.set(preset.get('freq_right', 440))
+        self.phase_angle.set(preset.get('phase_angle', 137.5))
+        self.amplitude.set(preset.get('amplitude', 0.7))
+        self.waveform.set(preset.get('waveform', 'golden_reversed'))
+        self.link_mode.set(preset.get('link_mode', 'beat'))
+        
+        self._update_frequencies()
+        self.info_var.set(f"📂 Loaded: {name}.json")
+
     def _update_frequencies(self):
         """Update L/R frequencies based on beat mode - AND UPDATE AUDIO IN REAL-TIME"""
         try:
@@ -1688,12 +1833,19 @@ class HarmonicTreeTab:
         self.animation_enabled = tk.BooleanVar(value=True)  # 10fps animation toggle
         self.phase_evolution = tk.BooleanVar(value=True)  # Phases rotate during growth
         
+        # Breathe mode: grow → sustain → fall back to silence
+        self.breathe_mode = tk.BooleanVar(value=False)  # Cycle grow/shrink
+        self.breathe_cycles = tk.IntVar(value=3)        # Number of breath cycles
+        self.sustain_fraction = tk.DoubleVar(value=0.2) # Fraction of cycle to hold at peak
+        
         # Growth state tracking
         self._growth_timer = None
         self._growth_start_time = None
         self._current_growth_level = [0.0] * 14  # Per-harmonic growth level (0-1)
         self._is_growing = False
         self._animation_after_id = None
+        self._current_cycle = 0
+        self._cycle_phase = 'grow'  # 'grow', 'sustain', 'shrink'
         
         self._setup_ui()
     
@@ -1802,6 +1954,28 @@ class HarmonicTreeTab:
         ttk.Checkbutton(phase_row, text="Evolve phases during growth (rotating branches)", 
                        variable=self.phase_evolution).pack(side='left')
         
+        # ═══════════════════════════════════════════════════════════════════
+        # BREATHE MODE: Grow → Sustain → Shrink → Silence → Repeat
+        # ═══════════════════════════════════════════════════════════════════
+        breathe_frame = ttk.LabelFrame(growth_frame, text="🌬️ Breathe Mode (Grow ↔ Shrink)", padding=3)
+        breathe_frame.pack(fill='x', pady=3)
+        
+        breathe_toggle = ttk.Frame(breathe_frame)
+        breathe_toggle.pack(fill='x', pady=2)
+        ttk.Checkbutton(breathe_toggle, text="Enable breathing (cycle grow → fall back)", 
+                       variable=self.breathe_mode).pack(side='left')
+        
+        breathe_params = ttk.Frame(breathe_frame)
+        breathe_params.pack(fill='x', pady=2)
+        ttk.Label(breathe_params, text="Cycles:").pack(side='left')
+        ttk.Spinbox(breathe_params, from_=1, to=20, textvariable=self.breathe_cycles, 
+                   width=4).pack(side='left', padx=3)
+        ttk.Label(breathe_params, text="Sustain:").pack(side='left', padx=(10,0))
+        ttk.Scale(breathe_params, from_=0.05, to=0.5, variable=self.sustain_fraction,
+                 orient='horizontal', length=80).pack(side='left', padx=3)
+        ttk.Label(breathe_params, text="(hold at peak)", font=('Courier', 8), 
+                 foreground='#888').pack(side='left')
+        
         # Growth progress bar
         self.growth_progress = ttk.Progressbar(growth_frame, mode='determinate', length=250)
         self.growth_progress.pack(fill='x', pady=5)
@@ -1877,31 +2051,36 @@ class HarmonicTreeTab:
     
     def _calculate_growth_schedule(self):
         """
-        Calculate when each harmonic should emerge using golden ratio cadences.
+        Calculate when each harmonic should emerge using SPREAD golden ratio cadences.
         
         Returns list of (harmonic_index, emergence_time_fraction) tuples.
         
-        Pattern: Fundamental at t=0, then harmonics emerge at cumulative φ⁻ⁿ intervals
-        This creates a natural acceleration pattern like tree growth.
+        FIXED TIMING: Harmonics now spread evenly across the duration with golden weighting.
+        Each harmonic gets a fair portion of time to emerge and grow.
         """
         n = self.num_harmonics.get() + 1  # Include fundamental
         
-        # Emergence times using golden ratio
-        # Fundamental (index 0) starts immediately
-        # Harmonic 1 emerges at φ⁻¹ ≈ 0.618 of remaining time
-        # Harmonic 2 emerges at φ⁻² ≈ 0.382 of remaining time after H1
-        # etc.
-        
+        # More spread-out timing: divide duration into n segments
+        # but weight by golden ratio for natural feel
         schedule = [(0, 0.0)]  # Fundamental at t=0
         
-        # Cumulative golden ratio for emergence times
-        cumulative = 0.0
+        if n <= 1:
+            return schedule
+        
+        # Spread harmonics across 0% to 80% of duration
+        # This gives each harmonic time to fully grow
+        max_emergence = 0.80  # Last harmonic starts at 80%, has 20% to grow
+        
         for i in range(1, n):
-            # Each harmonic emerges after φ⁻ⁿ fraction of total duration
-            emergence = cumulative + (PHI_CONJUGATE ** i) * 0.7  # Scale to leave room
-            emergence = min(emergence, 0.95)  # Cap at 95%
+            # Linear spread with slight golden weighting
+            # Each harmonic gets roughly equal time
+            base_fraction = i / n  # Linear: 0.2, 0.4, 0.6, 0.8 for 5 harmonics
+            
+            # Apply subtle golden modulation (not too aggressive)
+            golden_weight = 1.0 - (PHI_CONJUGATE ** (i * 0.5)) * 0.3
+            
+            emergence = base_fraction * max_emergence * golden_weight
             schedule.append((i, emergence))
-            cumulative = emergence
         
         return schedule
     
@@ -1909,9 +2088,8 @@ class HarmonicTreeTab:
         """
         Calculate golden-ratio fade envelope for a harmonic.
         
-        Based on natural growth patterns:
-        - Fade-in duration = φ⁻ⁿ × 0.2 (quicker for later harmonics)
-        - Uses smooth cosine curve
+        FIXED: Longer fade-in durations so harmonics grow more gracefully.
+        All harmonics get minimum 10% of total duration to fade in.
         
         Returns amplitude multiplier (0.0 to 1.0)
         """
@@ -1920,8 +2098,12 @@ class HarmonicTreeTab:
         
         time_since_emergence = elapsed_fraction - emergence_fraction
         
-        # Fade-in duration: shorter for later harmonics (golden decay)
-        fade_in_duration = (PHI_CONJUGATE ** harmonic_index) * 0.15 + 0.05
+        # FIXED: Much longer fade-in durations
+        # Base duration of 15% of total, with slight golden reduction for later harmonics
+        # Minimum 10% fade-in for all harmonics
+        base_fade = 0.15
+        golden_factor = 1.0 - (harmonic_index * 0.02)  # Only 2% reduction per harmonic
+        fade_in_duration = max(0.10, base_fade * golden_factor)
         
         if time_since_emergence >= fade_in_duration:
             return 1.0  # Fully grown
@@ -2239,43 +2421,115 @@ class HarmonicTreeTab:
         self.play_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
     
+    def _calculate_breathe_envelope(self, elapsed_fraction):
+        """
+        Calculate envelope for breathe mode (grow → sustain → shrink).
+        
+        One cycle:
+        - 40% grow (0.0 → 1.0)
+        - 20% sustain (hold at 1.0)  
+        - 40% shrink (1.0 → 0.0)
+        
+        Returns growth multiplier (0.0 to 1.0)
+        """
+        sustain = self.sustain_fraction.get()
+        grow_fraction = (1.0 - sustain) / 2
+        shrink_fraction = grow_fraction
+        
+        if elapsed_fraction < grow_fraction:
+            # Growing phase
+            t = elapsed_fraction / grow_fraction
+            return 0.5 * (1 - np.cos(np.pi * t))  # Smooth ease
+        elif elapsed_fraction < grow_fraction + sustain:
+            # Sustain phase (hold at peak)
+            return 1.0
+        else:
+            # Shrinking phase
+            t = (elapsed_fraction - grow_fraction - sustain) / shrink_fraction
+            return 0.5 * (1 + np.cos(np.pi * t))  # Smooth ease down
+    
     def _growth_callback(self):
-        """Timer callback for growth animation - runs at 10fps"""
+        """Timer callback for growth animation - runs at 10fps. Supports breathe mode."""
         if not self._is_growing or not self.audio.is_playing():
             return
         
         elapsed = time.time() - self._growth_start_time
         duration = self.growth_duration.get()
-        elapsed_fraction = min(elapsed / duration, 1.0)
         
-        # Update progress bar
-        self.growth_progress['value'] = elapsed_fraction * 100
-        
-        # Format elapsed time
-        elapsed_min, elapsed_sec = divmod(int(elapsed), 60)
-        total_min, total_sec = divmod(duration, 60)
-        self.growth_status.config(text=f"{elapsed_min:02d}:{elapsed_sec:02d} / {total_min:02d}:{total_sec:02d}")
-        
-        # Update audio with new growth state
-        self._update_audio(elapsed_fraction)
-        
-        # Update visualization (if animation enabled)
-        if self.animation_enabled.get():
-            self._draw_tree(elapsed_fraction)
-            self._update_info(elapsed_fraction)
-        
-        if elapsed_fraction >= 1.0:
-            # Growth complete
-            self._is_growing = False
-            self.status_var.set(f"🌳 Fully grown - {self.num_harmonics.get()+1} harmonics playing")
-            self.growth_status.config(text="Growth complete ✓")
-            # Set all growth levels to 1.0
+        if self.breathe_mode.get():
+            # Breathe mode: multiple cycles of grow/shrink
+            total_cycles = self.breathe_cycles.get()
+            cycle_duration = duration / total_cycles
+            
+            # Which cycle are we in?
+            current_cycle = int(elapsed / cycle_duration)
+            cycle_elapsed = elapsed % cycle_duration
+            cycle_fraction = cycle_elapsed / cycle_duration
+            
+            # Calculate envelope within this cycle
+            breathe_envelope = self._calculate_breathe_envelope(cycle_fraction)
+            
+            # Apply to all growth levels uniformly (simpler for breathe)
             for i in range(14):
-                self._current_growth_level[i] = 1.0
-            # Final update
-            self._draw_tree(1.0)
-            self._update_info(1.0)
-            return
+                self._current_growth_level[i] = breathe_envelope
+            
+            # Overall progress
+            overall_fraction = elapsed / duration
+            self.growth_progress['value'] = overall_fraction * 100
+            
+            # Status
+            phase = "🌱" if cycle_fraction < 0.4 else ("💚" if cycle_fraction < 0.6 else "🍂")
+            elapsed_min, elapsed_sec = divmod(int(elapsed), 60)
+            total_min, total_sec = divmod(duration, 60)
+            self.growth_status.config(
+                text=f"{phase} Cycle {current_cycle+1}/{total_cycles} | {elapsed_min:02d}:{elapsed_sec:02d} / {total_min:02d}:{total_sec:02d}")
+            
+            # Update audio and visualization
+            self._update_audio(breathe_envelope)  # Use envelope directly
+            
+            if self.animation_enabled.get():
+                self._draw_tree(breathe_envelope)
+                self._update_info(breathe_envelope)
+            
+            # Check if all cycles complete
+            if elapsed >= duration:
+                self._is_growing = False
+                self.status_var.set(f"🌬️ Breathing complete - {total_cycles} cycles")
+                self.growth_status.config(text="Breathing complete ✓")
+                self._stop()
+                return
+        else:
+            # Normal grow-only mode
+            elapsed_fraction = min(elapsed / duration, 1.0)
+            
+            # Update progress bar
+            self.growth_progress['value'] = elapsed_fraction * 100
+            
+            # Format elapsed time
+            elapsed_min, elapsed_sec = divmod(int(elapsed), 60)
+            total_min, total_sec = divmod(duration, 60)
+            self.growth_status.config(text=f"{elapsed_min:02d}:{elapsed_sec:02d} / {total_min:02d}:{total_sec:02d}")
+            
+            # Update audio with new growth state
+            self._update_audio(elapsed_fraction)
+            
+            # Update visualization (if animation enabled)
+            if self.animation_enabled.get():
+                self._draw_tree(elapsed_fraction)
+                self._update_info(elapsed_fraction)
+            
+            if elapsed_fraction >= 1.0:
+                # Growth complete
+                self._is_growing = False
+                self.status_var.set(f"🌳 Fully grown - {self.num_harmonics.get()+1} harmonics playing")
+                self.growth_status.config(text="Growth complete ✓")
+                # Set all growth levels to 1.0
+                for i in range(14):
+                    self._current_growth_level[i] = 1.0
+                # Final update
+                self._draw_tree(1.0)
+                self._update_info(1.0)
+                return
         
         # Schedule next frame (100ms = 10fps)
         self._animation_after_id = self.frame.after(100, self._growth_callback)
