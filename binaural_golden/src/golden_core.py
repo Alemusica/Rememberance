@@ -16,23 +16,16 @@ from dataclasses import dataclass
 from typing import List, Tuple
 import struct
 
-# Divine Constants - Maximum Precision
-PHI = (1 + np.sqrt(5)) / 2  # Golden Ratio φ = 1.618033988749895...
-PHI_CONJUGATE = PHI - 1      # φ conjugate = 0.618033988749895...
-SQRT_5 = np.sqrt(5)
+# ══════════════════════════════════════════════════════════════════════════════
+# CENTRALIZED CONSTANTS (from golden_constants module)
+# ══════════════════════════════════════════════════════════════════════════════
 
-# Prime numbers for sequences
-PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
-
-# Fibonacci sequence (converges to golden ratio)
-def fibonacci_sequence(n: int) -> List[int]:
-    """Generate Fibonacci sequence - ratio converges to φ"""
-    fib = [1, 1]
-    for i in range(2, n):
-        fib.append(fib[-1] + fib[-2])
-    return fib
-
-FIBONACCI = fibonacci_sequence(30)
+from golden_constants import (
+    PHI, PHI_CONJUGATE, SQRT_5,
+    PRIMES, FIBONACCI,
+    golden_spiral_interpolation, golden_transition,
+    apply_golden_envelope,
+)
 
 
 @dataclass
@@ -76,45 +69,15 @@ class GoldenParameters:
         )
 
 
-def golden_spiral_interpolation(t: float) -> float:
-    """
-    Golden spiral easing function - NOT linear!
-    Maps [0,1] to [0,1] following golden spiral dynamics
-    
-    This creates the "divine" transition curve
-    """
-    if t <= 0:
-        return 0.0
-    if t >= 1:
-        return 1.0
-    
-    # Golden spiral formula: r = a * e^(b*θ)
-    # where b = ln(φ) / (π/2) for perfect golden spiral
-    
-    # Transform t through golden spiral
-    theta = t * np.pi * PHI  # Angle scaled by golden ratio
-    
-    # Golden spiral easing
-    golden_ease = (1 - np.cos(theta * PHI_CONJUGATE)) / 2
-    
-    # Apply additional golden smoothing
-    # Using the golden ratio sigmoid
-    x = (t - 0.5) * 4  # Scale to [-2, 2]
-    golden_sigmoid = 1 / (1 + np.exp(-x * PHI))
-    
-    # Blend with golden weights
-    result = golden_ease * PHI_CONJUGATE + golden_sigmoid * (1 - PHI_CONJUGATE)
-    
-    return np.clip(result, 0.0, 1.0)
-
+# NOTE: golden_spiral_interpolation and golden_transition are now imported from golden_constants
+# The following legacy functions are kept for reference but use the centralized versions
 
 def golden_spiral_transition(start_val: float, end_val: float, t: float) -> float:
     """
-    Transition between two values using golden spiral interpolation
-    t should be in [0, 1]
+    Transition between two values using golden spiral interpolation.
+    Now uses the centralized golden_transition function.
     """
-    golden_t = golden_spiral_interpolation(t)
-    return start_val + (end_val - start_val) * golden_t
+    return golden_transition(start_val, end_val, t)
 
 
 class BinauralGenerator:

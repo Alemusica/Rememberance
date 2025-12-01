@@ -19,31 +19,16 @@ from enum import Enum
 import json
 
 # ══════════════════════════════════════════════════════════════════════════════
-# COSTANTI FISICHE
+# CENTRALIZED CONSTANTS (from golden_constants module)
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Velocità della luce (m/s)
-C = 299792458.0
-
-# Costante di Rydberg (m⁻¹)
-RYDBERG = 1.097373e7
-
-# Costante di Planck (J·s)
-PLANCK = 6.62607e-34
-
-# Costante di struttura fine α⁻¹
-FINE_STRUCTURE_INVERSE = 137.035999084
-
-# Golden ratio
-PHI = 1.618033988749895
-PHI_CONJUGATE = 0.618033988749895
-
-# Sample rate standard
-SAMPLE_RATE = 44100
-
-# Range audio (Hz) per lo scaling
-AUDIO_FREQ_MIN = 50.0    # Grave profondo
-AUDIO_FREQ_MAX = 4000.0  # Acuto udibile
+from golden_constants import (
+    PHI, PHI_CONJUGATE, SAMPLE_RATE,
+    C, RYDBERG, PLANCK, FINE_STRUCTURE_INVERSE,
+    AUDIO_FREQ_MIN, AUDIO_FREQ_MAX,
+    golden_ease, apply_golden_envelope,
+    FIBONACCI,
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATI SPETTRALI REALI
@@ -496,32 +481,12 @@ class SpectralSounder:
         return left * 0.8, right * 0.8
     
     def _apply_golden_envelope(self, signal: np.ndarray) -> np.ndarray:
-        """Applica envelope con proporzioni auree"""
-        length = len(signal)
-        
-        # Attack: φ⁻² della durata totale
-        attack_len = int(length * PHI_CONJUGATE * PHI_CONJUGATE * 0.2)
-        # Release: φ⁻¹ della durata totale
-        release_len = int(length * PHI_CONJUGATE * 0.3)
-        
-        envelope = np.ones(length)
-        
-        # Attack con curva golden
-        for i in range(attack_len):
-            t = i / attack_len
-            envelope[i] = self._golden_ease(t)
-        
-        # Release con curva golden
-        for i in range(release_len):
-            t = i / release_len
-            envelope[length - 1 - i] = self._golden_ease(t)
-        
-        return signal * envelope
+        """Applica envelope con proporzioni auree (usa funzione centralizzata)"""
+        return apply_golden_envelope(signal)
     
     def _golden_ease(self, t: float) -> float:
-        """Curva di easing basata su golden ratio"""
-        theta = t * np.pi * PHI
-        return (1 - np.cos(theta * PHI_CONJUGATE)) / 2
+        """Curva di easing basata su golden ratio (usa funzione centralizzata)"""
+        return golden_ease(t)
     
     def save_wav(self, signal: np.ndarray, filename: str, 
                  stereo: bool = False, right_channel: np.ndarray = None):

@@ -22,25 +22,16 @@ import os
 from typing import Optional, Tuple
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONSTANTS
+# CENTRALIZED CONSTANTS (from golden_constants module)
 # ══════════════════════════════════════════════════════════════════════════════
 
-PHI = 1.618033988749895
-PHI_CONJUGATE = 0.618033988749895
-SAMPLE_RATE = 44100
-
-SACRED_ANGLES = {
-    "Golden Angle (360°/φ²)": 360.0 / (PHI * PHI),
-    "Fine Structure (α⁻¹)": 137.035999084,
-    "DNA Helix (per base)": 34.3,
-    "Pentagon Internal": 108.0,
-    "Pyramid Giza Slope": 51.8392,
-    "Cancellation (180°)": 180.0,
-    "Quadrature (90°)": 90.0,
-    "Water H-O-H": 104.5,
-    "Methane (tetrahedral)": 109.5,
-    "Ammonia H-N-H": 107.3,
-}
+from golden_constants import (
+    PHI, PHI_CONJUGATE, SAMPLE_RATE, SACRED_ANGLES,
+    GOLDEN_ANGLE_DEG, GOLDEN_ANGLE_RAD,
+    golden_wave_sample, apply_golden_envelope, golden_ease,
+    generate_golden_phases, fibonacci_harmonics, phi_amplitude_decay,
+    FIBONACCI,
+)
 
 # PyAudio
 try:

@@ -22,7 +22,12 @@ from enum import Enum
 from spectral_sound import (
     SpectralSounder, PhaseMode, 
     HYDROGEN_BALMER, OXYGEN_ATMOSPHERIC,
-    PHI, PHI_CONJUGATE, SAMPLE_RATE, C
+)
+
+# Import centralized constants
+from golden_constants import (
+    PHI, PHI_CONJUGATE, SAMPLE_RATE, C,
+    apply_golden_envelope, golden_ease,
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -676,24 +681,8 @@ class MolecularSounder:
         return mapping.get(symbol)
     
     def _apply_envelope(self, signal: np.ndarray) -> np.ndarray:
-        """Applica envelope con proporzioni auree"""
-        length = len(signal)
-        attack = int(length * PHI_CONJUGATE * PHI_CONJUGATE * 0.2)
-        release = int(length * PHI_CONJUGATE * 0.3)
-        
-        envelope = np.ones(length)
-        
-        # Attack
-        for i in range(attack):
-            t = i / attack
-            envelope[i] = (1 - np.cos(t * np.pi * PHI * PHI_CONJUGATE)) / 2
-        
-        # Release
-        for i in range(release):
-            t = i / release
-            envelope[length - 1 - i] = (1 - np.cos(t * np.pi * PHI * PHI_CONJUGATE)) / 2
-        
-        return signal * envelope
+        """Applica envelope con proporzioni auree (usa funzione centralizzata)"""
+        return apply_golden_envelope(signal)
     
     def print_molecule_info(self, molecule: Molecule):
         """Stampa informazioni sulla molecola"""
