@@ -1850,10 +1850,51 @@ class HarmonicTreeTab:
         self._setup_ui()
     
     def _setup_ui(self):
-        """Build the UI"""
-        # Left panel - Controls
-        left_frame = ttk.LabelFrame(self.frame, text="🌳 Harmonic Tree Controls", padding=10)
-        left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        """Build the UI with scrollable left panel"""
+        # ═══════════════════════════════════════════════════════════════════
+        # LEFT PANEL WITH SCROLLBAR
+        # ═══════════════════════════════════════════════════════════════════
+        left_container = ttk.Frame(self.frame)
+        left_container.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        
+        # Create canvas for scrolling
+        self._scroll_canvas = tk.Canvas(left_container, highlightthickness=0, width=420)
+        scrollbar = ttk.Scrollbar(left_container, orient='vertical', command=self._scroll_canvas.yview)
+        
+        # Scrollable frame inside canvas
+        left_frame = ttk.LabelFrame(self._scroll_canvas, text="🌳 Harmonic Tree Controls", padding=10)
+        
+        # Configure scrolling
+        self._scroll_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        scrollbar.pack(side='right', fill='y')
+        self._scroll_canvas.pack(side='left', fill='both', expand=True)
+        
+        # Create window inside canvas for the frame
+        self._canvas_window = self._scroll_canvas.create_window((0, 0), window=left_frame, anchor='nw')
+        
+        # Bind events for scroll region update
+        def _configure_scroll_region(event):
+            self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        
+        def _configure_canvas_width(event):
+            self._scroll_canvas.itemconfig(self._canvas_window, width=event.width)
+        
+        left_frame.bind('<Configure>', _configure_scroll_region)
+        self._scroll_canvas.bind('<Configure>', _configure_canvas_width)
+        
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            self._scroll_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        self._scroll_canvas.bind_all('<MouseWheel>', _on_mousewheel)  # Windows/Linux
+        self._scroll_canvas.bind_all('<Button-4>', lambda e: self._scroll_canvas.yview_scroll(-1, "units"))  # Linux scroll up
+        self._scroll_canvas.bind_all('<Button-5>', lambda e: self._scroll_canvas.yview_scroll(1, "units"))   # Linux scroll down
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # CONTROLS CONTENT
+        # ═══════════════════════════════════════════════════════════════════
         
         # Fundamental frequency
         fund_frame = ttk.LabelFrame(left_frame, text="🎵 Fundamental (Trunk)", padding=5)
@@ -2241,25 +2282,33 @@ class HarmonicTreeTab:
             if growth < 0.01:
                 continue
             
-            # Phase determines angle from trunk
-            phase_deg = np.degrees(phases[i])
-            angle_from_vertical = (phase_deg % 360) - 180  # Center around vertical
+            # ═══════════════════════════════════════════════════════════════
+            # PROPER GOLDEN ANGLE (PHYLLOTAXIS) VISUALIZATION
+            # Each branch at i × 137.5° - like sunflower seeds!
+            # This creates the famous non-overlapping spiral pattern
+            # ═══════════════════════════════════════════════════════════════
+            golden_angle_deg = 137.507764  # The golden angle in degrees
+            branch_angle = i * golden_angle_deg  # Cumulative rotation
+            
+            # Convert to radians, starting from vertical (up = 0°)
+            angle_rad = np.radians(branch_angle)
             
             # Branch length proportional to amplitude AND growth
-            branch_length = (80 * amplitudes[0] + 30) * growth  # Use base amplitude
+            # Longer branches for lower harmonics (more energy)
+            base_length = 80 * amplitudes[0] + 40
+            # Distance from center increases with index (spiral outward)
+            radius_factor = 0.6 + (i * 0.15)  # Each branch slightly further out
+            branch_length = base_length * growth * radius_factor
             
             # Branch width proportional to amplitude AND growth
-            branch_width = max(1, (10 * amplitudes[0] + 2) * growth)
+            branch_width = max(1, (10 * amplitudes[0] + 2) * growth * (1.0 - i * 0.05))
             
-            # Calculate branch endpoint
-            angle_rad = np.radians(angle_from_vertical)
-            
-            # Y offset for each harmonic (stack them up)
-            y_offset = i * 25 * growth  # Grows upward
-            origin_y = branch_origin_y - y_offset
+            # Calculate branch endpoint using polar coordinates
+            # Branches radiate from a central point in golden angle pattern
+            center_y = branch_origin_y - 60  # Central point above trunk top
             
             end_x = cx + branch_length * np.sin(angle_rad)
-            end_y = origin_y - branch_length * np.cos(angle_rad) * 0.5
+            end_y = center_y - branch_length * np.cos(angle_rad) * 0.6
             
             color = colors[(i - 1) % len(colors)]
             
@@ -2271,8 +2320,8 @@ class HarmonicTreeTab:
                 b = int(int(color[5:7], 16) * growth)
                 color = f'#{r:02x}{g:02x}{b:02x}'
             
-            # Draw branch
-            self.canvas.create_line(cx, origin_y, end_x, end_y,
+            # Draw branch from center point
+            self.canvas.create_line(cx, center_y, end_x, end_y,
                                    fill=color, width=branch_width,
                                    capstyle='round')
             
