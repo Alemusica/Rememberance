@@ -1882,6 +1882,7 @@ class HarmonicTreeTab:
         self.growth_duration = tk.IntVar(value=60)    # Duration in seconds
         self.animation_enabled = tk.BooleanVar(value=True)  # 10fps animation toggle
         self.phase_evolution = tk.BooleanVar(value=True)  # Phases rotate during growth
+        self.fixed_trunk_mode = tk.BooleanVar(value=True)  # True = fundamental fixed, False = whole tree rotates
         
         # Breathe mode: grow → sustain → fall back to silence
         self.breathe_mode = tk.BooleanVar(value=False)  # Cycle grow/shrink
@@ -2044,6 +2045,17 @@ class HarmonicTreeTab:
         phase_row.pack(fill='x', pady=3)
         ttk.Checkbutton(phase_row, text="Evolve phases during growth (rotating branches)", 
                        variable=self.phase_evolution).pack(side='left')
+        
+        # Fixed trunk mode toggle (only visible when phase evolution is enabled)
+        trunk_row = ttk.Frame(growth_frame)
+        trunk_row.pack(fill='x', pady=3)
+        ttk.Label(trunk_row, text="    Rotation mode:", font=('Courier', 9)).pack(side='left')
+        ttk.Radiobutton(trunk_row, text="🌲 Fixed Trunk", variable=self.fixed_trunk_mode,
+                       value=True).pack(side='left', padx=5)
+        ttk.Radiobutton(trunk_row, text="🌀 Whole Tree", variable=self.fixed_trunk_mode,
+                       value=False).pack(side='left', padx=5)
+        ttk.Label(trunk_row, text="(fundamental phase)", font=('Courier', 8), 
+                 foreground='#888').pack(side='left', padx=5)
         
         # ═══════════════════════════════════════════════════════════════════
         # BREATHE MODE: Grow → Sustain → Shrink → Silence → Repeat
@@ -2272,8 +2284,16 @@ class HarmonicTreeTab:
         if apply_growth and self.phase_evolution.get():
             # Rotate phases over time - slower for later harmonics
             phase_offset = elapsed_fraction * 2 * np.pi
-            phases = [(base_phases[i] + phase_offset * PHI_CONJUGATE ** i) % (2 * np.pi) 
-                     for i in range(total)]
+            
+            if self.fixed_trunk_mode.get():
+                # Mode: Fixed Trunk - Fundamental stays at 0°, harmonics rotate
+                phases = [0.0]  # Fundamental fixed at phase 0
+                phases += [(base_phases[i] + phase_offset * PHI_CONJUGATE ** i) % (2 * np.pi) 
+                          for i in range(1, total)]
+            else:
+                # Mode: Whole Tree - All phases rotate including fundamental
+                phases = [(base_phases[i] + phase_offset * PHI_CONJUGATE ** i) % (2 * np.pi) 
+                         for i in range(total)]
         else:
             phases = base_phases
         
