@@ -106,21 +106,31 @@ class AudioEngine:
     def _scan_devices(self):
         """Scan for audio output devices"""
         if not HAS_PYAUDIO:
+            print("⚠️ PyAudio not available")
             return
         try:
             pa = pyaudio.PyAudio()
             self.devices = []
-            for i in range(pa.get_device_count()):
-                info = pa.get_device_info_by_index(i)
-                if info['maxOutputChannels'] > 0:
-                    self.devices.append({
-                        'index': i,
-                        'name': info['name'],
-                        'channels': info['maxOutputChannels'],
-                    })
+            count = pa.get_device_count()
+            print(f"📡 Scanning {count} audio devices...")
+            for i in range(count):
+                try:
+                    info = pa.get_device_info_by_index(i)
+                    if info['maxOutputChannels'] > 0:
+                        self.devices.append({
+                            'index': i,
+                            'name': info['name'],
+                            'channels': info['maxOutputChannels'],
+                        })
+                        print(f"  ✓ {i}: {info['name']} ({info['maxOutputChannels']} ch)")
+                except Exception as e:
+                    print(f"  ✗ Device {i}: {e}")
             pa.terminate()
+            print(f"📡 Found {len(self.devices)} output devices")
         except Exception as e:
-            print(f"Error scanning devices: {e}")
+            print(f"❌ Error scanning devices: {e}")
+            import traceback
+            traceback.print_exc()
     
     def get_device_names(self):
         return [d['name'] for d in self.devices]
@@ -2818,12 +2828,20 @@ class GoldenSoundStudio:
         tk.Label(device_frame, text="Audio Device:", fg='#888', bg='#1a1a2e',
                 font=('Courier', 9)).pack(side='left')
         
+        # Re-scan devices to ensure fresh list
+        self.audio._scan_devices()
         devices = self.audio.get_device_names()
+        print(f"🔊 Found {len(devices)} audio devices: {devices}")
+        
         self.device_var = tk.StringVar(value=devices[0] if devices else "Default")
-        device_combo = ttk.Combobox(device_frame, textvariable=self.device_var,
-                                   values=devices, state='readonly', width=40)
-        device_combo.pack(side='left', padx=10)
-        device_combo.bind('<<ComboboxSelected>>', self._on_device_change)
+        self.device_combo = ttk.Combobox(device_frame, textvariable=self.device_var,
+                                   values=devices, state='readonly', width=50)
+        self.device_combo.pack(side='left', padx=10)
+        self.device_combo.bind('<<ComboboxSelected>>', self._on_device_change)
+        
+        # Refresh button
+        ttk.Button(device_frame, text="🔄", width=3, 
+                  command=self._refresh_devices).pack(side='left', padx=5)
         
         # Notebook (tabs)
         style = ttk.Style()
@@ -2858,6 +2876,16 @@ class GoldenSoundStudio:
         """Handle device selection change"""
         idx = self.audio.get_device_names().index(self.device_var.get())
         self.audio.set_device(idx)
+        print(f"🔊 Selected device: {self.device_var.get()} (index {idx})")
+    
+    def _refresh_devices(self):
+        """Refresh the device list"""
+        self.audio._scan_devices()
+        devices = self.audio.get_device_names()
+        self.device_combo['values'] = devices
+        if devices:
+            self.device_var.set(devices[0])
+        print(f"🔄 Refreshed: {len(devices)} devices found")
     
     def _on_close(self):
         """Handle window close"""
