@@ -30,6 +30,12 @@ SQRT_5: float = np.sqrt(5)  # 2.2360679774997896
 GOLDEN_ANGLE_DEG: float = 360.0 / (PHI * PHI)  # 137.5077640500378546°
 GOLDEN_ANGLE_RAD: float = np.radians(GOLDEN_ANGLE_DEG)
 
+# Golden-Fifth Gap Angle: the phase difference between φ and the Perfect Fifth (3/2)
+# Formula: (φ - 1.5) / φ × 360° = 26.2593...°
+# This represents the "missing" angle between musical perfection (1.5) and golden perfection (φ)
+GOLDEN_FIFTH_GAP_DEG: float = ((PHI - 1.5) / PHI) * 360.0  # 26.2593...°
+GOLDEN_FIFTH_GAP_RAD: float = np.radians(GOLDEN_FIFTH_GAP_DEG)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUDIO CONSTANTS
@@ -63,6 +69,7 @@ GAMMA_RANGE = (30.0, 100.0) # High cognition
 SACRED_ANGLES = {
     # Golden / Fibonacci related
     "Golden Angle (360°/φ²)": GOLDEN_ANGLE_DEG,
+    "φ-Fifth Gap (φ-1.5)/φ": GOLDEN_FIFTH_GAP_DEG,  # Gap between golden ratio and perfect fifth
     
     # Physics constants
     "Fine Structure (α⁻¹)": 137.035999084,
