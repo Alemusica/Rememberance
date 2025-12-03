@@ -16,6 +16,75 @@ This software generates audio that guides the listener through mathematically pe
 - **Maximum Precision**: 96kHz, 24-bit audio with 64-bit float internal processing
 - **Optional Rust Core**: For absolute maximum precision
 
+---
+
+## 📊 Development Status
+
+### ✅ Completed Features
+
+#### 🎵 Golden Sound Studio (Main Application)
+- **Tab 1: Binaural Beats** - Phase angle control with sacred geometry presets
+- **Tab 2: Spectral Sound** - Play atomic elements (H, He, O, Na, etc.) from real spectral lines
+- **Tab 3: Molecular Sound** - Play molecules (H₂O, CO₂, CH₄) with bond angles as phases
+- **Tab 4: Harmonic Tree** - Fibonacci harmonics with phyllotaxis visualization
+
+#### 🌳 Harmonic Tree Features
+- **Fibonacci ratios**: 2f, 3f, 5f, 8f, 13f harmonics
+- **Golden Angle phases**: Each harmonic rotated by 137.5°
+- **Amplitude decay**: φ⁻ⁿ natural decay pattern
+- **Therapeutic Growth Mode**: Harmonics emerge progressively (10s to 1hr)
+- **Breathe Mode**: Grow → sustain → shrink cycles
+- **3D Isometric visualization** with sound→light color mapping
+
+#### 🌲 Phase Rotation Modes (NEW)
+Two modes for phase evolution during growth:
+1. **Fixed Trunk** (default): Fundamental stays at 0°, harmonics rotate
+2. **Whole Tree**: All phases rotate including fundamental
+
+See `docs/PHASE_ROTATION_MODES.md` for full documentation.
+
+#### 🎯 Golden-Fifth Gap Angle (NEW)
+The "missing angle" between musical and golden perfection:
+```
+φ (Golden Ratio) = 1.618034
+P5 (Perfect Fifth) = 1.5
+Gap Angle = (φ - 1.5) / φ × 360° = 26.26°
+```
+Added to SACRED_ANGLES in golden_constants.py
+
+#### 📐 Sacred Angles Library
+- Golden Angle (137.5°)
+- **φ-Fifth Gap (26.26°)** ← NEW
+- Fine Structure (137.04°)
+- DNA Helix (34.3°)
+- Pentagon (108°)
+- Pyramid Giza (51.84°)
+- Water molecule (104.5°)
+- Methane tetrahedral (109.5°)
+- And more...
+
+#### 🔊 Audio Engine
+- Real-time parameter updates (no glitches)
+- Multi-device support (DDJ-FLX4, BlackHole, etc.)
+- Callback-based continuous playback
+- Stereo panning with golden angle positioning
+
+### 🚧 In Progress
+
+- [ ] **Soundboard panning**: 2-exciter setup on spruce board (2000mm distance)
+- [ ] **Wave propagation model**: Account for wood grain velocity
+- [ ] **ITD/ILD calculations**: Physical panning for soundboard
+
+### 📋 Planned Features
+
+- [ ] MIDI control integration
+- [ ] OSC protocol support
+- [ ] Export to VST/AU plugin
+- [ ] Preset sharing/import
+- [ ] Session recording with automation
+
+---
+
 ## 📐 The Mathematics
 
 ### Divine Constants
