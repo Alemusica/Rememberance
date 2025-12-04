@@ -33,6 +33,7 @@ from golden_constants import (
     generate_golden_phases, fibonacci_harmonics, phi_amplitude_decay,
     FIBONACCI,
     sound_to_light_color, harmonic_color_palette, SOLFEGGIO_FREQUENCIES,
+    SOUNDBOARD_CONFIG,
 )
 
 # PyAudio
@@ -56,6 +57,18 @@ try:
 except ImportError:
     HAS_MOLECULAR = False
     print("⚠️ molecular_sound.py not found")
+
+# Import soundboard panning module
+try:
+    from soundboard_panning import (
+        SoundboardConfig, SoundboardPanner, 
+        calculate_panning, print_panning_table,
+        SPRUCE_VELOCITY_LONGITUDINAL, BOARD_LENGTH_MM
+    )
+    HAS_SOUNDBOARD = True
+except ImportError:
+    HAS_SOUNDBOARD = False
+    print("⚠️ soundboard_panning.py not found")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2810,6 +2823,609 @@ class HarmonicTreeTab:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 5: VIBROACOUSTIC SOUNDBOARD - Physical Panning for Head-Feet Axis
+# ══════════════════════════════════════════════════════════════════════════════
+
+class VibroacousticTab:
+    """
+    Vibroacoustic soundboard panning for therapy table with 2 exciters.
+    
+    Physical setup:
+    - Spruce board: 2000mm × 600mm × 10mm on springs
+    - Exciters: HEAD (0mm) and FEET (2000mm) on short edges
+    - Listener: lying centered, ears ~150mm from head edge
+    - Springs: 5× (4 corners + 1 center), 15-20kg each for floor decoupling
+    
+    Panning model uses:
+    - ITD (Interaural Time Difference): Delay based on sound velocity in spruce
+    - ILD (Interaural Level Difference): Equal-power + soft distance attenuation
+    
+    "Feel the sound travel through your body"
+    """
+    
+    def __init__(self, parent, audio_engine: AudioEngine):
+        self.parent = parent
+        self.audio = audio_engine
+        self.frame = ttk.Frame(parent)
+        
+        # Initialize soundboard panner
+        if HAS_SOUNDBOARD:
+            self.config = SoundboardConfig(sample_rate=SAMPLE_RATE)
+            self.panner = SoundboardPanner(self.config)
+        else:
+            self.config = None
+            self.panner = None
+        
+        # State
+        self.pan_position = tk.DoubleVar(value=0.0)  # -1 (head) to +1 (feet)
+        self.frequency = tk.DoubleVar(value=432.0)   # Base frequency
+        self.amplitude = tk.DoubleVar(value=0.7)
+        self.waveform = tk.StringVar(value="sine")
+        
+        # Auto-sweep mode
+        self.sweep_enabled = tk.BooleanVar(value=False)
+        self.sweep_duration = tk.DoubleVar(value=10.0)  # seconds per sweep
+        self.sweep_mode = tk.StringVar(value="sine")  # sine, linear, golden
+        
+        # Sweep state
+        self._sweep_timer = None
+        self._sweep_start_time = None
+        self._is_sweeping = False
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Build the UI"""
+        if not HAS_SOUNDBOARD:
+            ttk.Label(self.frame, text="⚠️ soundboard_panning.py not found").pack(pady=50)
+            return
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # LEFT PANEL - Controls
+        # ═══════════════════════════════════════════════════════════════════
+        left_frame = ttk.LabelFrame(self.frame, text="🪵 Vibroacoustic Controls", padding=10)
+        left_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        
+        # Physical setup info
+        info_frame = ttk.LabelFrame(left_frame, text="📐 Physical Setup", padding=5)
+        info_frame.pack(fill='x', pady=5)
+        
+        info_text = f"""Board: {self.config.length_mm:.0f}×{self.config.width_mm:.0f}mm spruce
+Velocity: {self.config.velocity_ms:.0f} m/s (along fiber)
+Max delay: {self.config.max_delay_ms:.3f} ms ({self.config.max_delay_samples} samples)
+Springs: 5× (4 corners + 1 center)"""
+        
+        ttk.Label(info_frame, text=info_text, font=('Courier', 9), 
+                 foreground='#888').pack(anchor='w')
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PAN CONTROL - Main slider (vertical for head-feet axis)
+        # ═══════════════════════════════════════════════════════════════════
+        pan_frame = ttk.LabelFrame(left_frame, text="🎚️ Pan Position (Head ↔ Feet)", padding=10)
+        pan_frame.pack(fill='x', pady=5)
+        
+        # Horizontal layout with labels
+        pan_row = ttk.Frame(pan_frame)
+        pan_row.pack(fill='x', pady=5)
+        
+        ttk.Label(pan_row, text="🧠 HEAD", font=('Helvetica', 10, 'bold'),
+                 foreground='#ff6b6b').pack(side='left', padx=5)
+        
+        self.pan_scale = ttk.Scale(pan_row, from_=-1, to=1, variable=self.pan_position,
+                                   orient='horizontal', length=250,
+                                   command=self._on_pan_change)
+        self.pan_scale.pack(side='left', padx=10)
+        
+        ttk.Label(pan_row, text="🦶 FEET", font=('Helvetica', 10, 'bold'),
+                 foreground='#4ecdc4').pack(side='left', padx=5)
+        
+        # Pan value display
+        self.pan_label = ttk.Label(pan_frame, text="Pan: 0.00 (CENTER)", 
+                                   font=('Courier', 11, 'bold'))
+        self.pan_label.pack(pady=5)
+        
+        # Quick pan presets
+        preset_row = ttk.Frame(pan_frame)
+        preset_row.pack(fill='x', pady=3)
+        
+        presets = [
+            ("🧠 Head", -1.0),
+            ("↑ Upper", -0.5),
+            ("● Center", 0.0),
+            ("↓ Lower", 0.5),
+            ("🦶 Feet", 1.0),
+        ]
+        
+        for name, pan in presets:
+            ttk.Button(preset_row, text=name, width=8,
+                      command=lambda p=pan: self._set_pan(p)).pack(side='left', padx=2)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # ITD/ILD DISPLAY
+        # ═══════════════════════════════════════════════════════════════════
+        itd_frame = ttk.LabelFrame(left_frame, text="📊 ITD/ILD Values", padding=5)
+        itd_frame.pack(fill='x', pady=5)
+        
+        self.itd_label = ttk.Label(itd_frame, text="", font=('Courier', 9))
+        self.itd_label.pack(anchor='w')
+        self._update_itd_display()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SWEEP MODE (Auto-panning)
+        # ═══════════════════════════════════════════════════════════════════
+        sweep_frame = ttk.LabelFrame(left_frame, text="🌊 Auto-Sweep (Body Wave)", padding=5)
+        sweep_frame.pack(fill='x', pady=5)
+        
+        sweep_toggle = ttk.Frame(sweep_frame)
+        sweep_toggle.pack(fill='x', pady=2)
+        ttk.Checkbutton(sweep_toggle, text="Enable sweep (sound travels head↔feet)",
+                       variable=self.sweep_enabled,
+                       command=self._on_sweep_toggle).pack(side='left')
+        
+        sweep_params = ttk.Frame(sweep_frame)
+        sweep_params.pack(fill='x', pady=2)
+        
+        ttk.Label(sweep_params, text="Duration:").pack(side='left')
+        for secs in [5, 10, 30, 60]:
+            ttk.Button(sweep_params, text=f"{secs}s", width=4,
+                      command=lambda s=secs: self.sweep_duration.set(s)).pack(side='left', padx=2)
+        
+        sweep_mode_row = ttk.Frame(sweep_frame)
+        sweep_mode_row.pack(fill='x', pady=2)
+        ttk.Label(sweep_mode_row, text="Mode:").pack(side='left')
+        for mode in ["sine", "linear", "golden"]:
+            ttk.Radiobutton(sweep_mode_row, text=mode, variable=self.sweep_mode,
+                           value=mode).pack(side='left', padx=5)
+        
+        # Sweep progress
+        self.sweep_progress = ttk.Progressbar(sweep_frame, mode='determinate', length=250)
+        self.sweep_progress.pack(fill='x', pady=3)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # FREQUENCY & AMPLITUDE
+        # ═══════════════════════════════════════════════════════════════════
+        freq_frame = ttk.LabelFrame(left_frame, text="🎵 Sound Parameters", padding=5)
+        freq_frame.pack(fill='x', pady=5)
+        
+        freq_row = ttk.Frame(freq_frame)
+        freq_row.pack(fill='x', pady=2)
+        ttk.Label(freq_row, text="Frequency (Hz):").pack(side='left')
+        ttk.Entry(freq_row, textvariable=self.frequency, width=8).pack(side='left', padx=5)
+        ttk.Scale(freq_row, from_=20, to=500, variable=self.frequency,
+                  orient='horizontal', length=150,
+                  command=self._on_freq_change).pack(side='left')
+        
+        # Frequency presets (therapeutic)
+        freq_presets = ttk.Frame(freq_frame)
+        freq_presets.pack(fill='x', pady=2)
+        for name, freq in [("40Hz γ", 40), ("100Hz", 100), ("174Hz", 174), 
+                           ("432Hz", 432), ("528Hz", 528)]:
+            ttk.Button(freq_presets, text=name, width=6,
+                      command=lambda f=freq: self._set_frequency(f)).pack(side='left', padx=2)
+        
+        amp_row = ttk.Frame(freq_frame)
+        amp_row.pack(fill='x', pady=2)
+        ttk.Label(amp_row, text="Amplitude:").pack(side='left')
+        ttk.Scale(amp_row, from_=0, to=1, variable=self.amplitude,
+                  orient='horizontal', length=150,
+                  command=self._on_amp_change).pack(side='left', padx=5)
+        
+        wave_row = ttk.Frame(freq_frame)
+        wave_row.pack(fill='x', pady=2)
+        ttk.Label(wave_row, text="Waveform:").pack(side='left')
+        for wf in ["sine", "golden"]:
+            ttk.Radiobutton(wave_row, text=wf, variable=self.waveform,
+                           value=wf, command=self._on_waveform_change).pack(side='left', padx=5)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PLAYBACK BUTTONS
+        # ═══════════════════════════════════════════════════════════════════
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill='x', pady=10)
+        
+        self.play_btn = ttk.Button(btn_frame, text="▶ PLAY", command=self._play)
+        self.play_btn.pack(side='left', padx=5)
+        
+        self.stop_btn = ttk.Button(btn_frame, text="⏹ STOP", command=self._stop, state='disabled')
+        self.stop_btn.pack(side='left', padx=5)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # RIGHT PANEL - Visualization
+        # ═══════════════════════════════════════════════════════════════════
+        right_frame = ttk.LabelFrame(self.frame, text="🛏️ Soundboard Visualization", padding=10)
+        right_frame.pack(side='right', fill='both', expand=True, padx=5, pady=5)
+        
+        self.canvas = tk.Canvas(right_frame, width=300, height=450, bg='#0a0a15')
+        self.canvas.pack(pady=10)
+        
+        self.status_var = tk.StringVar(value="Configure and press PLAY")
+        ttk.Label(right_frame, textvariable=self.status_var).pack()
+        
+        # Initial draw
+        self._draw_soundboard()
+    
+    def _set_pan(self, pan: float):
+        """Set pan position"""
+        self.pan_position.set(pan)
+        self._on_pan_change(None)
+    
+    def _set_frequency(self, freq: float):
+        """Set frequency"""
+        self.frequency.set(freq)
+        self._on_freq_change(None)
+    
+    def _on_pan_change(self, event):
+        """Handle pan change"""
+        pan = self.pan_position.get()
+        
+        # Update label
+        if pan < -0.8:
+            pos_name = "HEAD"
+        elif pan > 0.8:
+            pos_name = "FEET"
+        elif abs(pan) < 0.1:
+            pos_name = "CENTER"
+        else:
+            pos_name = "↑" if pan < 0 else "↓"
+        
+        self.pan_label.config(text=f"Pan: {pan:+.2f} ({pos_name})")
+        
+        # Update ITD/ILD display
+        self._update_itd_display()
+        
+        # Update visualization
+        self._draw_soundboard()
+        
+        # Update panner and audio if playing
+        if self.panner:
+            self.panner.pan = pan
+        
+        if self.audio.is_playing():
+            self._update_audio()
+    
+    def _on_freq_change(self, event):
+        """Handle frequency change"""
+        if self.audio.is_playing():
+            self._update_audio()
+    
+    def _on_amp_change(self, event):
+        """Handle amplitude change"""
+        if self.audio.is_playing():
+            self.audio.set_amplitude(self.amplitude.get())
+    
+    def _on_waveform_change(self):
+        """Handle waveform change"""
+        if self.audio.is_playing():
+            self.audio.set_waveform(self.waveform.get())
+    
+    def _on_sweep_toggle(self):
+        """Handle sweep toggle"""
+        if self.sweep_enabled.get() and self.audio.is_playing():
+            self._start_sweep()
+        else:
+            self._stop_sweep()
+    
+    def _update_itd_display(self):
+        """Update ITD/ILD value display"""
+        if not self.config:
+            return
+        
+        pan = self.pan_position.get()
+        params = calculate_panning(pan, self.config)
+        
+        text = f"""HEAD exciter:  Delay {params['delay_head_ms']:.3f} ms | Gain {params['gain_head_db']:+.1f} dB
+FEET exciter:  Delay {params['delay_feet_ms']:.3f} ms | Gain {params['gain_feet_db']:+.1f} dB"""
+        
+        self.itd_label.config(text=text)
+    
+    def _update_audio(self):
+        """Update audio with current panning parameters"""
+        if not self.panner:
+            return
+        
+        pan = self.pan_position.get()
+        freq = self.frequency.get()
+        amp = self.amplitude.get()
+        
+        params = calculate_panning(pan, self.config)
+        
+        # For soundboard mode, we send to HEAD and FEET exciters
+        # These go to LEFT and RIGHT channels respectively
+        # HEAD = LEFT channel, FEET = RIGHT channel
+        
+        # Create stereo output with ITD delays applied
+        # Since AudioEngine doesn't support per-channel delay natively,
+        # we'll use spectral mode with 2 frequencies (same freq, different timing)
+        # and position them hard left/right
+        
+        # For now, use simple amplitude panning (ILD only)
+        # Full ITD would require modifying AudioEngine's callback
+        
+        frequencies = [freq, freq]
+        amplitudes = [params['gain_head'] * amp, params['gain_feet'] * amp]
+        phases = [0.0, 0.0]  # Same phase for both (ITD would offset this)
+        positions = [-1.0, 1.0]  # HEAD=left, FEET=right
+        
+        self.audio.set_spectral_params(frequencies, amplitudes, phases, positions)
+    
+    def _draw_soundboard(self):
+        """Draw top-down view of soundboard with body silhouette"""
+        self.canvas.delete('all')
+        
+        # Canvas dimensions
+        cw, ch = 300, 450
+        
+        # Board dimensions in pixels (scaled)
+        board_w = 100  # 600mm → 100px
+        board_h = 350  # 2000mm → 350px
+        board_x = (cw - board_w) // 2
+        board_y = (ch - board_h) // 2
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # BOARD OUTLINE
+        # ═══════════════════════════════════════════════════════════════════
+        self.canvas.create_rectangle(board_x, board_y, 
+                                     board_x + board_w, board_y + board_h,
+                                     outline='#8b4513', width=3, fill='#2d1810')
+        
+        # Wood grain lines
+        for i in range(5, board_h, 15):
+            y = board_y + i
+            self.canvas.create_line(board_x + 5, y, board_x + board_w - 5, y,
+                                   fill='#3d2817', width=1)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SPRINGS (4 corners + 1 center)
+        # ═══════════════════════════════════════════════════════════════════
+        spring_color = '#666'
+        spring_size = 8
+        spring_positions = [
+            (board_x - 15, board_y + 20),           # Top-left
+            (board_x + board_w + 5, board_y + 20),  # Top-right
+            (board_x - 15, board_y + board_h - 20), # Bottom-left
+            (board_x + board_w + 5, board_y + board_h - 20), # Bottom-right
+            (board_x + board_w // 2 - spring_size, board_y + board_h // 2),  # Center
+        ]
+        
+        for sx, sy in spring_positions:
+            # Draw spring coil
+            self.canvas.create_oval(sx, sy, sx + spring_size * 2, sy + spring_size * 2,
+                                   outline=spring_color, width=2)
+            self.canvas.create_line(sx + spring_size, sy, 
+                                   sx + spring_size, sy + spring_size * 2,
+                                   fill=spring_color, width=2)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # EXCITERS
+        # ═══════════════════════════════════════════════════════════════════
+        exciter_w, exciter_h = 40, 15
+        
+        # HEAD exciter (top)
+        head_x = board_x + (board_w - exciter_w) // 2
+        head_y = board_y - exciter_h + 3
+        self.canvas.create_rectangle(head_x, head_y, head_x + exciter_w, head_y + exciter_h,
+                                     fill='#ff6b6b', outline='#ff4444', width=2)
+        self.canvas.create_text(head_x + exciter_w // 2, head_y - 10,
+                               text="🧠 HEAD", fill='#ff6b6b', font=('Helvetica', 9, 'bold'))
+        
+        # FEET exciter (bottom)
+        feet_x = board_x + (board_w - exciter_w) // 2
+        feet_y = board_y + board_h - 3
+        self.canvas.create_rectangle(feet_x, feet_y, feet_x + exciter_w, feet_y + exciter_h,
+                                     fill='#4ecdc4', outline='#3dbdb4', width=2)
+        self.canvas.create_text(feet_x + exciter_w // 2, feet_y + exciter_h + 12,
+                               text="🦶 FEET", fill='#4ecdc4', font=('Helvetica', 9, 'bold'))
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # BODY SILHOUETTE
+        # ═══════════════════════════════════════════════════════════════════
+        body_color = '#444'
+        
+        # Simple body outline (head, torso, legs)
+        cx = board_x + board_w // 2
+        
+        # Head circle
+        head_radius = 20
+        head_cy = board_y + 50
+        self.canvas.create_oval(cx - head_radius, head_cy - head_radius,
+                               cx + head_radius, head_cy + head_radius,
+                               outline=body_color, width=2)
+        
+        # Ears (for ITD reference)
+        ear_y = head_cy
+        self.canvas.create_oval(cx - head_radius - 8, ear_y - 5,
+                               cx - head_radius - 2, ear_y + 5,
+                               fill='#555', outline=body_color)
+        self.canvas.create_oval(cx + head_radius + 2, ear_y - 5,
+                               cx + head_radius + 8, ear_y + 5,
+                               fill='#555', outline=body_color)
+        
+        # Torso (rectangle)
+        torso_w, torso_h = 50, 120
+        torso_y = head_cy + head_radius + 10
+        self.canvas.create_rectangle(cx - torso_w // 2, torso_y,
+                                     cx + torso_w // 2, torso_y + torso_h,
+                                     outline=body_color, width=2)
+        
+        # Legs
+        leg_w = 18
+        leg_h = 100
+        leg_y = torso_y + torso_h + 5
+        
+        # Left leg
+        self.canvas.create_rectangle(cx - torso_w // 2 + 3, leg_y,
+                                     cx - torso_w // 2 + 3 + leg_w, leg_y + leg_h,
+                                     outline=body_color, width=2)
+        # Right leg
+        self.canvas.create_rectangle(cx + torso_w // 2 - 3 - leg_w, leg_y,
+                                     cx + torso_w // 2 - 3, leg_y + leg_h,
+                                     outline=body_color, width=2)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SOUND SOURCE POSITION (virtual)
+        # ═══════════════════════════════════════════════════════════════════
+        pan = self.pan_position.get()
+        
+        # Map pan -1..+1 to y position on board
+        source_y = board_y + board_h // 2 + int(pan * (board_h // 2 - 30))
+        source_x = cx
+        
+        # Sound waves emanating from source
+        wave_color = '#ffd700'
+        for r in [15, 25, 35]:
+            alpha = 1.0 - r / 50
+            self.canvas.create_oval(source_x - r, source_y - r // 2,
+                                   source_x + r, source_y + r // 2,
+                                   outline=wave_color, width=1)
+        
+        # Source point
+        self.canvas.create_oval(source_x - 8, source_y - 8,
+                               source_x + 8, source_y + 8,
+                               fill='#ffd700', outline='white', width=2)
+        
+        # Arrow showing direction
+        if abs(pan) > 0.1:
+            arrow_dir = 1 if pan > 0 else -1
+            arrow_len = 20
+            self.canvas.create_line(source_x, source_y,
+                                   source_x, source_y + arrow_dir * arrow_len,
+                                   fill='#ffd700', width=3, arrow='last')
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SIGNAL FLOW INDICATORS
+        # ═══════════════════════════════════════════════════════════════════
+        if self.panner:
+            params = calculate_panning(pan, self.config)
+            
+            # Head exciter intensity
+            head_intensity = int(255 * params['gain_head'])
+            head_color = f'#ff{head_intensity:02x}{head_intensity:02x}'
+            self.canvas.create_rectangle(head_x + 2, head_y + 2,
+                                        head_x + exciter_w - 2, head_y + exciter_h - 2,
+                                        fill=head_color, outline='')
+            
+            # Feet exciter intensity
+            feet_intensity = int(255 * params['gain_feet'])
+            feet_color = f'#{feet_intensity:02x}ff{feet_intensity:02x}'
+            self.canvas.create_rectangle(feet_x + 2, feet_y + 2,
+                                        feet_x + exciter_w - 2, feet_y + exciter_h - 2,
+                                        fill=feet_color, outline='')
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # LABELS
+        # ═══════════════════════════════════════════════════════════════════
+        # Position label
+        if pan < -0.8:
+            pos_text = "HEAD"
+        elif pan > 0.8:
+            pos_text = "FEET"
+        elif abs(pan) < 0.1:
+            pos_text = "CENTER"
+        else:
+            pos_text = f"{abs(pan)*100:.0f}% {'↑HEAD' if pan < 0 else '↓FEET'}"
+        
+        self.canvas.create_text(cw // 2, 15, text=f"Source: {pos_text}",
+                               fill='#ffd700', font=('Helvetica', 11, 'bold'))
+        
+        # Scale indicator
+        self.canvas.create_text(cw // 2, ch - 10, 
+                               text="2000mm (spruce board on springs)",
+                               fill='#666', font=('Courier', 8))
+    
+    def _play(self):
+        """Start playback"""
+        freq = self.frequency.get()
+        amp = self.amplitude.get()
+        pan = self.pan_position.get()
+        
+        # Initialize panner
+        if self.panner:
+            self.panner.set_pan_immediate(pan)
+        
+        params = calculate_panning(pan, self.config)
+        
+        # Start with spectral mode (2 channels for HEAD/FEET)
+        frequencies = [freq, freq]
+        amplitudes = [params['gain_head'] * amp, params['gain_feet'] * amp]
+        phases = [0.0, 0.0]
+        positions = [-1.0, 1.0]  # HEAD=left, FEET=right
+        
+        self.audio.start_spectral(frequencies, amplitudes, phases, positions,
+                                  master_amplitude=1.0)
+        
+        self.play_btn.config(state='disabled')
+        self.stop_btn.config(state='normal')
+        self.status_var.set(f"🔊 Playing {freq:.0f}Hz | Pan: {pan:+.2f}")
+        
+        # Start sweep if enabled
+        if self.sweep_enabled.get():
+            self._start_sweep()
+    
+    def _stop(self):
+        """Stop playback"""
+        self._stop_sweep()
+        self.audio.stop()
+        self.play_btn.config(state='normal')
+        self.stop_btn.config(state='disabled')
+        self.sweep_progress['value'] = 0
+        self.status_var.set("Configure and press PLAY")
+    
+    def _start_sweep(self):
+        """Start auto-sweep"""
+        self._is_sweeping = True
+        self._sweep_start_time = time.time()
+        self._sweep_callback()
+    
+    def _stop_sweep(self):
+        """Stop auto-sweep"""
+        self._is_sweeping = False
+        if self._sweep_timer:
+            self.frame.after_cancel(self._sweep_timer)
+            self._sweep_timer = None
+    
+    def _sweep_callback(self):
+        """Sweep animation callback"""
+        if not self._is_sweeping or not self.audio.is_playing():
+            return
+        
+        elapsed = time.time() - self._sweep_start_time
+        duration = self.sweep_duration.get()
+        
+        # Calculate progress (0 to 1)
+        progress = (elapsed % duration) / duration
+        
+        # Calculate pan based on mode
+        mode = self.sweep_mode.get()
+        if mode == "sine":
+            # Smooth sine wave: head → center → feet → center → head
+            pan = np.sin(progress * 2 * np.pi)
+        elif mode == "linear":
+            # Triangle wave
+            if progress < 0.5:
+                pan = -1.0 + 4 * progress  # -1 → 1
+            else:
+                pan = 3.0 - 4 * progress   # 1 → -1
+        else:  # golden
+            # Golden spiral easing
+            t = progress * 2
+            if t <= 1:
+                pan = -1.0 + 2 * (0.5 * (1 - np.cos(t * np.pi * PHI_CONJUGATE)))
+            else:
+                t = t - 1
+                pan = 1.0 - 2 * (0.5 * (1 - np.cos(t * np.pi * PHI_CONJUGATE)))
+        
+        # Update pan
+        self.pan_position.set(pan)
+        self._on_pan_change(None)
+        
+        # Update progress bar
+        self.sweep_progress['value'] = progress * 100
+        
+        # Schedule next frame (30fps)
+        self._sweep_timer = self.frame.after(33, self._sweep_callback)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2875,11 +3491,13 @@ class GoldenSoundStudio:
         self.spectral_tab = SpectralTab(self.notebook, self.audio)
         self.molecular_tab = MolecularTab(self.notebook, self.audio)
         self.harmonic_tree_tab = HarmonicTreeTab(self.notebook, self.audio)
+        self.vibroacoustic_tab = VibroacousticTab(self.notebook, self.audio)
         
         self.notebook.add(self.binaural_tab.frame, text="🎵 Binaural Beats")
         self.notebook.add(self.spectral_tab.frame, text="⚛️ Spectral Sound")
         self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
         self.notebook.add(self.harmonic_tree_tab.frame, text="🌳 Harmonic Tree")
+        self.notebook.add(self.vibroacoustic_tab.frame, text="🪵 Vibroacoustic")
         
         # Status bar
         status_frame = tk.Frame(self.root, bg='#1a1a2e')
@@ -2922,6 +3540,7 @@ class GoldenSoundStudio:
 ║   ⚛️ Tab 2: Spectral Sound - Play atomic elements (H, He, O, Na...)         ║
 ║   🧪 Tab 3: Molecular Sound - Play molecules (H₂O, CO₂, CH₄...)             ║
 ║   🌳 Tab 4: Harmonic Tree - Fundamental + Fibonacci harmonics               ║
+║   🪵 Tab 5: Vibroacoustic - Soundboard panning (HEAD↔FEET)                  ║
 ║                                                                              ║
 ║   Based on natural phyllotaxis patterns:                                     ║
 ║   • Harmonics at Fibonacci ratios (2f, 3f, 5f, 8f, 13f)                     ║

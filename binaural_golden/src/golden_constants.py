@@ -111,6 +111,99 @@ RYDBERG: float = 1.097373e7
 # Fine structure constant inverse α⁻¹
 FINE_STRUCTURE_INVERSE: float = 137.035999084
 
+# Speed of sound in air (m/s at 20°C)
+SPEED_OF_SOUND_AIR: float = 343.0
+
+# Speed of sound in spruce wood (Abete) - for soundboard
+SPEED_OF_SOUND_SPRUCE_LONGITUDINAL: float = 5500.0  # m/s along grain
+SPEED_OF_SOUND_SPRUCE_TRANSVERSE: float = 1800.0    # m/s across grain
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SOUNDBOARD PHYSICAL CONFIGURATION (Vibroacoustic Therapy)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Physical setup:
+#   - Spruce board (tavola abete Bricocenter): ~2000mm × 600mm × 10mm
+#   - Fiber direction: longitudinal (fibra lungo la tavola)
+#   - Two exciters: HEAD (0mm) and FEET (1900mm) center-to-center
+#   - Listener: lying centered (sdraiato centrale)
+#   - Spring isolation: 5× (4 corners + 1 center), 15-20kg each
+#
+# Hardware:
+#   - Exciters: 2× Visaton EX 60S (25W RMS, 8Ω, neodymium)
+#   - Amplifier: Behringer EPQ304 (4ch Class D, 40W/ch @ 8Ω, stereo mode)
+#
+#         ┌─────────────────────┐
+#         │      [EXCITER       │
+#         │       HEAD]         │  ← lato corto (600mm)
+#         │         ▼           │
+#         │    ┌─────────┐      │
+#         │    │  TESTA  │      │
+#         │    │  CORPO  │      │  1900mm (center-to-center)
+#         │    │  PIEDI  │      │
+#         │    └─────────┘      │
+#         │         ▲           │
+#         │      [EXCITER       │
+#         │       FEET]         │  ← lato corto (600mm)
+#         └─────────────────────┘
+#               (5 molle sotto)
+
+SOUNDBOARD_CONFIG = {
+    # Board dimensions (mm)
+    'board_length_mm': 1900.0,  # Actual center-to-center exciter distance
+    'board_width_mm': 600.0,
+    'board_thickness_mm': 10.0,
+    
+    # Sound velocity (spruce, fiber longitudinal)
+    'velocity_ms': SPEED_OF_SOUND_SPRUCE_LONGITUDINAL,
+    
+    # Exciter positions (mm from head edge, center-to-center)
+    'exciter_head_mm': 0.0,
+    'exciter_feet_mm': 1900.0,
+    
+    # Listener position
+    'ears_from_head_mm': 150.0,
+    'listener_center_mm': 950.0,
+    
+    # Spring isolation
+    'num_springs': 5,
+    'spring_load_kg': 17.5,  # Average 15-20 kg
+    
+    # Acoustic properties
+    'attenuation_alpha': 0.4,  # Soft (resonant board on springs)
+    
+    # ───────────────────────────────────────────────────────────────
+    # EXCITER: Visaton EX 60S (body-shaker transducer)
+    # Source: Official Visaton datasheet (SPL/Impedance graph)
+    # ───────────────────────────────────────────────────────────────
+    'exciter_model': 'Visaton EX 60S',
+    'exciter_power_w': 25.0,          # Watts RMS
+    'exciter_impedance_ohm': 8.0,     # Ohms nominal (8-25Ω range)
+    'exciter_resonance_hz': 65.0,     # Hz (Fs from impedance peak)
+    'exciter_freq_min_hz': 50.0,      # Hz (-3dB, usable range)
+    'exciter_freq_max_hz': 20000.0,   # Hz
+    'exciter_spl_peak_hz': 300.0,     # Hz (max efficiency ~80dB)
+    'exciter_magnet': 'Neodymium',
+    
+    # ───────────────────────────────────────────────────────────────
+    # AMPLIFIER: Behringer EPQ304 (4-channel Class D, stereo mode)
+    # ───────────────────────────────────────────────────────────────
+    'amp_model': 'Behringer EPQ304 (stereo)',
+    'amp_channels': 4,
+    'amp_class': 'D',
+    'amp_power_8ohm_w': 40.0,         # Watts RMS per channel @ 8Ω
+    'amp_power_4ohm_w': 65.0,         # Watts RMS per channel @ 4Ω
+    'amp_power_bridged_8ohm_w': 130.0,# Watts RMS bridged @ 8Ω
+    'amp_form_factor': '1U rackmount',
+    
+    # ───────────────────────────────────────────────────────────────
+    # DERIVED VALUES
+    # ───────────────────────────────────────────────────────────────
+    'max_delay_ms': 1.90 / SPEED_OF_SOUND_SPRUCE_LONGITUDINAL * 1000,  # ~0.345ms
+    'max_delay_samples_48k': int(1.90 / SPEED_OF_SOUND_SPRUCE_LONGITUDINAL * 48000),  # ~17
+}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SEQUENCES
@@ -603,6 +696,10 @@ __all__ = [
     
     # Physical constants
     'C', 'PLANCK', 'RYDBERG', 'FINE_STRUCTURE_INVERSE',
+    'SPEED_OF_SOUND_AIR', 'SPEED_OF_SOUND_SPRUCE_LONGITUDINAL', 'SPEED_OF_SOUND_SPRUCE_TRANSVERSE',
+    
+    # Soundboard configuration
+    'SOUNDBOARD_CONFIG',
     
     # Sequences
     'FIBONACCI', 'PRIMES',

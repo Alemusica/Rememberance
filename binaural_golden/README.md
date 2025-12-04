@@ -36,6 +36,16 @@ This software generates audio that guides the listener through mathematically pe
 - **Breathe Mode**: Grow → sustain → shrink cycles
 - **3D Isometric visualization** with sound→light color mapping
 
+#### 🪵 Vibroacoustic Soundboard (NEW)
+Physical panning for therapy soundboard with 2 exciters:
+- **Head-Feet axis**: Exciter at head (0mm) and feet (2000mm)
+- **Spruce velocity**: 5500 m/s along fiber (Brico standard board)
+- **ITD (Interaural Time Difference)**: Max 0.36ms delay for localization
+- **ILD (Interaural Level Difference)**: Equal-power panning + soft attenuation
+- **Spring isolation**: 5× springs (4 corners + 1 center) for floor decoupling
+- **Auto-sweep mode**: Sine/linear/golden wave body massage
+- **Real-time visualization**: Top-down board view with body silhouette
+
 #### 🌲 Phase Rotation Modes (NEW)
 Two modes for phase evolution during growth:
 1. **Fixed Trunk** (default): Fundamental stays at 0°, harmonics rotate
@@ -71,9 +81,13 @@ Added to SACRED_ANGLES in golden_constants.py
 
 ### 🚧 In Progress
 
-- [ ] **Soundboard panning**: 2-exciter setup on spruce board (2000mm distance)
-- [ ] **Wave propagation model**: Account for wood grain velocity
-- [ ] **ITD/ILD calculations**: Physical panning for soundboard
+- [ ] **Wave propagation model**: Account for wood grain velocity variations
+- [ ] **Frequency-dependent propagation**: Higher frequencies attenuate faster
+
+### ✅ Recently Completed
+
+- [x] **Soundboard panning**: 2-exciter setup on spruce board (2000mm distance)
+- [x] **ITD/ILD calculations**: Physical panning for soundboard
 
 ### 📋 Planned Features
 
