@@ -20,15 +20,18 @@ This software generates audio that guides the listener through mathematically pe
 
 ## 📊 Development Status
 
-### ✅ Completed Features
+> **Last Updated**: December 6, 2025
+
+### ✅ Completed & Working Features
 
 #### 🎵 Golden Sound Studio (Main Application)
-- **Tab 1: Binaural Beats** - Phase angle control with sacred geometry presets
-- **Tab 2: Spectral Sound** - Play atomic elements (H, He, O, Na, etc.) from real spectral lines
-- **Tab 3: Molecular Sound** - Play molecules (H₂O, CO₂, CH₄) with bond angles as phases
-- **Tab 4: Harmonic Tree** - Fibonacci harmonics with phyllotaxis visualization
+- **Tab 1: Binaural Beats** - Phase angle control with sacred geometry presets ✅
+- **Tab 2: Spectral Sound** - Play atomic elements (H, He, O, Na, etc.) ✅
+- **Tab 3: Molecular Sound** - Play molecules (H₂O, CO₂, CH₄) ✅
+- **Tab 4: Harmonic Tree** - Fibonacci harmonics with visualization ✅
+- **Tab 5: Vibroacoustic** - Soundboard panning (basic sweep mode) ✅
 
-#### 🌳 Harmonic Tree Features
+#### 🌳 Harmonic Tree Features (STABLE)
 - **Fibonacci ratios**: 2f, 3f, 5f, 8f, 13f harmonics
 - **Golden Angle phases**: Each harmonic rotated by 137.5°
 - **Amplitude decay**: φ⁻ⁿ natural decay pattern
@@ -36,7 +39,7 @@ This software generates audio that guides the listener through mathematically pe
 - **Breathe Mode**: Grow → sustain → shrink cycles
 - **3D Isometric visualization** with sound→light color mapping
 
-#### 🪵 Vibroacoustic Soundboard (NEW)
+#### 🪵 Vibroacoustic Soundboard (BASIC WORKING)
 Physical panning for therapy soundboard with 2 exciters:
 - **Head-Feet axis**: Exciter at head (0mm) and feet (2000mm)
 - **Spruce velocity**: 5500 m/s along fiber (Brico standard board)
@@ -46,14 +49,14 @@ Physical panning for therapy soundboard with 2 exciters:
 - **Auto-sweep mode**: Sine/linear/golden wave body massage
 - **Real-time visualization**: Top-down board view with body silhouette
 
-#### 🌲 Phase Rotation Modes (NEW)
+#### 🌲 Phase Rotation Modes
 Two modes for phase evolution during growth:
 1. **Fixed Trunk** (default): Fundamental stays at 0°, harmonics rotate
 2. **Whole Tree**: All phases rotate including fundamental
 
 See `docs/PHASE_ROTATION_MODES.md` for full documentation.
 
-#### 🎯 Golden-Fifth Gap Angle (NEW)
+#### 🎯 Golden-Fifth Gap Angle
 The "missing angle" between musical and golden perfection:
 ```
 φ (Golden Ratio) = 1.618034
@@ -64,7 +67,7 @@ Added to SACRED_ANGLES in golden_constants.py
 
 #### 📐 Sacred Angles Library
 - Golden Angle (137.5°)
-- **φ-Fifth Gap (26.26°)** ← NEW
+- **φ-Fifth Gap (26.26°)**
 - Fine Structure (137.04°)
 - DNA Helix (34.3°)
 - Pentagon (108°)
@@ -79,15 +82,23 @@ Added to SACRED_ANGLES in golden_constants.py
 - Callback-based continuous playback
 - Stereo panning with golden angle positioning
 
-### 🚧 In Progress
+### ⚠️ Known Issues
 
+1. **Audio Clicks/Pops**: Some clicking artifacts occur during rapid parameter changes
+   - Affects: Vibroacoustic pan position changes, potentially Harmonic Tree growth
+   - Root cause: Needs investigation - may be related to buffer boundaries or sudden amplitude changes
+   - Workaround: Use slower sweep modes, avoid rapid manual pan changes
+
+### 🚧 In Progress / Needs Work
+
+- [ ] **Chakra Convergence Journey** - ATTEMPTED but audio clicking issues prevented completion
+  - Concept: 3-frequency journey (Perfect 4th, Root, Octave) converging at solar plexus
+  - Body positions calculated from mm on 1950mm board
+  - Blocked by: Audio engine needs smoother parameter interpolation
+  
 - [ ] **Wave propagation model**: Account for wood grain velocity variations
 - [ ] **Frequency-dependent propagation**: Higher frequencies attenuate faster
-
-### ✅ Recently Completed
-
-- [x] **Soundboard panning**: 2-exciter setup on spruce board (2000mm distance)
-- [x] **ITD/ILD calculations**: Physical panning for soundboard
+- [ ] **Click-free audio transitions**: AudioEngine needs per-sample smoothing for pan/amplitude
 
 ### 📋 Planned Features
 
@@ -96,6 +107,21 @@ Added to SACRED_ANGLES in golden_constants.py
 - [ ] Export to VST/AU plugin
 - [ ] Preset sharing/import
 - [ ] Session recording with automation
+
+### 🔧 Technical Notes for Next Developer
+
+**Audio Click Investigation Needed:**
+The `_generate_spectral_chunk()` method in `AudioEngine` class needs investigation.
+Current implementation has basic smoothing but clicks still occur. Possible causes:
+1. Buffer boundary discontinuities
+2. Normalization causing sudden volume changes
+3. Pan law calculation at extreme positions (pan = -1 or +1)
+4. Thread synchronization issues with parameter updates
+
+**File Locations:**
+- Main app: `src/golden_studio.py` (~3556 lines)
+- Soundboard panning: `src/soundboard_panning.py`
+- Constants: `src/golden_constants.py`
 
 ---
 
