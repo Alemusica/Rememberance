@@ -108,6 +108,13 @@ class AudioEngine:
         self.spectral_phases = []  # Phase accumulators for each frequency
         self.stereo_positions = []  # -1 to 1 for panning
         
+        # === SMOOTH PARAMETER INTERPOLATION ===
+        # These track current values that smoothly approach targets
+        self._target_amplitudes = []   # Target amplitude for each frequency
+        self._current_amplitudes = []  # Current (smoothed) amplitude
+        self._target_positions = []    # Target pan position for each frequency
+        self._current_positions = []   # Current (smoothed) pan position
+        
         # Thread safety
         self.lock = threading.Lock()
         
@@ -198,6 +205,9 @@ class AudioEngine:
         """
         Update spectral/molecular parameters in real-time.
         
+        Uses smooth interpolation to prevent clicks - targets are set here,
+        actual values smoothly approach targets in the audio callback.
+        
         frequencies: list of Hz values
         amplitudes: list of amplitude values [0,1]
         phases: optional list of phase offsets (radians)
@@ -210,6 +220,15 @@ class AudioEngine:
                 phases or [0.0] * len(frequencies)
             ))
             self.stereo_positions = positions or [0.0] * len(frequencies)
+            
+            # Set TARGET values for smooth interpolation
+            self._target_amplitudes = list(amplitudes)
+            self._target_positions = list(positions) if positions else [0.0] * len(frequencies)
+            
+            # Initialize current values if not set (first call)
+            if len(self._current_amplitudes) != len(frequencies):
+                self._current_amplitudes = list(amplitudes)
+                self._current_positions = list(self._target_positions)
             
             # Initialize phase accumulators if needed
             if len(self.spectral_phases) != len(frequencies):
@@ -285,11 +304,21 @@ class AudioEngine:
         return output.tobytes()
     
     def _generate_spectral_chunk(self, frame_count: int) -> bytes:
-        """Generate spectral/molecular stereo chunk with multiple frequencies"""
+        """
+        Generate spectral/molecular stereo chunk with multiple frequencies.
+        
+        Uses PER-SAMPLE smooth interpolation to prevent clicks:
+        - Amplitudes smoothly approach target values
+        - Pan positions smoothly approach target values
+        - Soft limiting instead of hard normalization
+        """
         with self.lock:
             freq_data = list(self.spectral_frequencies)
-            positions = list(self.stereo_positions)
-            amp = self.amplitude
+            target_amps = list(self._target_amplitudes) if self._target_amplitudes else []
+            target_pans = list(self._target_positions) if self._target_positions else []
+            current_amps = list(self._current_amplitudes) if self._current_amplitudes else []
+            current_pans = list(self._current_positions) if self._current_positions else []
+            master_amp = self.amplitude
         
         if not freq_data:
             # Silence if no frequencies
@@ -298,19 +327,53 @@ class AudioEngine:
         output_left = np.zeros(frame_count, dtype=np.float32)
         output_right = np.zeros(frame_count, dtype=np.float32)
         
-        # Ensure we have enough phase accumulators
+        # Ensure we have enough phase accumulators and smoothing trackers
         while len(self.spectral_phases) < len(freq_data):
             self.spectral_phases.append(0.0)
+        while len(current_amps) < len(freq_data):
+            current_amps.append(0.0)
+        while len(current_pans) < len(freq_data):
+            current_pans.append(0.0)
+        while len(target_amps) < len(freq_data):
+            target_amps.append(0.0)
+        while len(target_pans) < len(freq_data):
+            target_pans.append(0.0)
         
-        for idx, (freq, freq_amp, phase_off) in enumerate(freq_data):
+        # Smoothing coefficients (per sample)
+        # At 44100 Hz, we need VERY slow smoothing to avoid clicks
+        # The GUI updates targets every 30ms (~1323 samples)
+        # We want changes to take ~100-200ms to complete for smooth transitions
+        # 
+        # Time constant calculation: samples_to_63% = 1/coeff
+        # - 0.0001 = 10000 samples (~227ms) - ULTRA smooth
+        # - 0.00015 = 6667 samples (~151ms) - Very smooth  
+        # - 0.0002 = 5000 samples (~113ms) - Smooth
+        #
+        amp_smooth = 0.00012   # ~190ms to reach 63% - very smooth amplitude
+        pan_smooth = 0.00008   # ~280ms to reach 63% - ultra smooth panning
+        
+        for idx, (freq, _, phase_off) in enumerate(freq_data):
             phase_inc = 2 * np.pi * freq / SAMPLE_RATE
-            pan = positions[idx] if idx < len(positions) else 0.0
-            
-            # Pan law: equal power
-            left_gain = np.cos((pan + 1) * np.pi / 4)
-            right_gain = np.sin((pan + 1) * np.pi / 4)
             
             for i in range(frame_count):
+                # Smooth amplitude toward target
+                amp_diff = target_amps[idx] - current_amps[idx]
+                current_amps[idx] += amp_diff * amp_smooth
+                
+                # Smooth pan toward target
+                pan_diff = target_pans[idx] - current_pans[idx]
+                current_pans[idx] += pan_diff * pan_smooth
+                
+                # Use smoothed values
+                freq_amp = current_amps[idx]
+                pan = current_pans[idx]
+                
+                # Pan law: equal power with small minimum to avoid pure silence
+                # Add tiny epsilon to prevent one channel from being exactly 0
+                pan_angle = (pan + 1) * np.pi / 4
+                left_gain = max(0.02, np.cos(pan_angle))   # Min 2% to avoid silence
+                right_gain = max(0.02, np.sin(pan_angle))  # Min 2% to avoid silence
+                
                 sample = freq_amp * np.sin(self.spectral_phases[idx] + phase_off)
                 output_left[i] += sample * left_gain
                 output_right[i] += sample * right_gain
@@ -319,14 +382,19 @@ class AudioEngine:
                 if self.spectral_phases[idx] > 2 * np.pi:
                     self.spectral_phases[idx] -= 2 * np.pi
         
-        # Normalize and apply master amplitude
-        max_val = max(np.max(np.abs(output_left)), np.max(np.abs(output_right)), 0.001)
-        if max_val > 1.0:
-            output_left /= max_val
-            output_right /= max_val
+        # Store updated smooth values back
+        with self.lock:
+            self._current_amplitudes = current_amps
+            self._current_positions = current_pans
         
-        output_left *= amp
-        output_right *= amp
+        # Apply master amplitude first
+        output_left *= master_amp
+        output_right *= master_amp
+        
+        # Simple hard clip to prevent damage - NO dynamic gain changes
+        # Dynamic limiting was causing discontinuities between buffers
+        np.clip(output_left, -1.0, 1.0, out=output_left)
+        np.clip(output_right, -1.0, 1.0, out=output_right)
         
         # Interleave
         output = np.empty(frame_count * 2, dtype=np.float32)
@@ -2872,6 +2940,27 @@ class VibroacousticTab:
         self._sweep_start_time = None
         self._is_sweeping = False
         
+        # ═══════════════════════════════════════════════════════════════════
+        # CHAKRA SUNRISE STATE
+        # ═══════════════════════════════════════════════════════════════════
+        self._is_chakra_playing = False
+        self._chakra_timer = None
+        self._chakra_start_time = None
+        self._journey_duration = 60.0  # Default 1 minute
+        
+        # Three frequencies for Chakra Sunrise
+        self._freq_fourth = 0.0    # Perfect 4th (base × 4/3)
+        self._freq_root = 0.0      # Root/fundamental (base × 1)
+        self._freq_octave = 0.0    # Octave (base × 2)
+        
+        # Amplitude and pan for each frequency (smoothly interpolated by AudioEngine)
+        self._fourth_amp = 0.0
+        self._fourth_pan = 0.0
+        self._root_amp = 0.0
+        self._root_pan = 0.0
+        self._octave_amp = 0.0
+        self._octave_pan = 0.0
+        
         self._setup_ui()
     
     def _setup_ui(self):
@@ -2980,6 +3069,66 @@ Springs: 5× (4 corners + 1 center)"""
         # Sweep progress
         self.sweep_progress = ttk.Progressbar(sweep_frame, mode='determinate', length=250)
         self.sweep_progress.pack(fill='x', pady=3)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # CHAKRA SUNRISE - 3-frequency convergence journey
+        # ═══════════════════════════════════════════════════════════════════
+        chakra_frame = ttk.LabelFrame(left_frame, text="🌅 Chakra Sunrise Journey", padding=5)
+        chakra_frame.pack(fill='x', pady=5)
+        
+        # Description
+        desc_text = """3 frequencies converge at solar plexus:
+• Perfect 4th (×4/3) - emerges at belly
+• Root (×1) - rises from feet  
+• Octave (×2) - descends from head"""
+        ttk.Label(chakra_frame, text=desc_text, font=('Helvetica', 9),
+                 foreground='#888', justify='left').pack(anchor='w', pady=2)
+        
+        # Duration selector
+        dur_row = ttk.Frame(chakra_frame)
+        dur_row.pack(fill='x', pady=3)
+        ttk.Label(dur_row, text="Duration:").pack(side='left')
+        
+        self.chakra_duration = tk.DoubleVar(value=60.0)
+        for label, secs in [("30s", 30), ("1m", 60), ("2m", 120), ("5m", 300)]:
+            ttk.Button(dur_row, text=label, width=4,
+                      command=lambda s=secs: self.chakra_duration.set(s)).pack(side='left', padx=2)
+        
+        # Base frequency for chakra
+        base_row = ttk.Frame(chakra_frame)
+        base_row.pack(fill='x', pady=3)
+        ttk.Label(base_row, text="Base freq:").pack(side='left')
+        self.chakra_base_freq = tk.DoubleVar(value=128.0)  # C3 area
+        ttk.Entry(base_row, textvariable=self.chakra_base_freq, width=6).pack(side='left', padx=3)
+        ttk.Label(base_row, text="Hz").pack(side='left')
+        
+        # Frequency display
+        self.chakra_freq_label = ttk.Label(chakra_frame, text="", font=('Courier', 9))
+        self.chakra_freq_label.pack(anchor='w', pady=2)
+        self._update_chakra_freq_display()
+        
+        # Bind base freq change
+        self.chakra_base_freq.trace_add('write', lambda *args: self._update_chakra_freq_display())
+        
+        # Play/Stop buttons
+        chakra_btn_row = ttk.Frame(chakra_frame)
+        chakra_btn_row.pack(fill='x', pady=5)
+        
+        self.chakra_play_btn = ttk.Button(chakra_btn_row, text="🌅 Begin Journey", 
+                                          command=self._start_chakra_journey)
+        self.chakra_play_btn.pack(side='left', padx=5)
+        
+        self.chakra_stop_btn = ttk.Button(chakra_btn_row, text="⏹ Stop", 
+                                          command=self._stop_chakra_journey, state='disabled')
+        self.chakra_stop_btn.pack(side='left', padx=5)
+        
+        # Progress bar and state
+        self.chakra_progress = ttk.Progressbar(chakra_frame, mode='determinate', length=250)
+        self.chakra_progress.pack(fill='x', pady=3)
+        
+        self.chakra_state_label = ttk.Label(chakra_frame, text="Ready", 
+                                            font=('Helvetica', 10), foreground='#666')
+        self.chakra_state_label.pack(anchor='w')
         
         # ═══════════════════════════════════════════════════════════════════
         # FREQUENCY & AMPLITUDE
@@ -3423,6 +3572,296 @@ FEET exciter:  Delay {params['delay_feet_ms']:.3f} ms | Gain {params['gain_feet_
         
         # Schedule next frame (30fps)
         self._sweep_timer = self.frame.after(33, self._sweep_callback)
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CHAKRA SUNRISE METHODS
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    def _update_chakra_freq_display(self):
+        """Update the frequency display for Chakra Sunrise"""
+        try:
+            base = self.chakra_base_freq.get()
+            fourth = base * 4 / 3
+            octave = base * 2
+            self.chakra_freq_label.config(
+                text=f"4th: {fourth:.1f}Hz | Root: {base:.1f}Hz | Oct: {octave:.1f}Hz"
+            )
+        except:
+            pass
+    
+    def _mm_to_pan(self, position_mm):
+        """
+        Convert body position in mm to pan value (-1 to +1).
+        Board is 1950mm: HEAD at 0mm → -1.0, FEET at 1950mm → +1.0
+        """
+        return (position_mm / 975.0) - 1.0
+    
+    def _golden_fade(self, t, fade_in=True):
+        """
+        Golden ratio based fade curve using φ exponent.
+        Creates a smooth S-curve that follows golden proportions:
+        - Slow start (breathing in)
+        - Natural acceleration through middle  
+        - Slow end (settling)
+        
+        The φ exponent creates a curve that feels organic.
+        """
+        t = max(0.0, min(1.0, t))  # Clamp to 0-1
+        
+        if fade_in:
+            # Raised cosine with golden exponent for smooth start/end
+            # cos goes 1→-1, so (1-cos)/2 goes 0→1
+            base = (1 - np.cos(t * np.pi)) / 2.0
+            # Apply golden exponent for organic curve
+            return base ** PHI_CONJUGATE  # ≈ 0.618 exponent = faster rise
+        else:
+            # Fade out: mirror of fade in
+            base = (1 - np.cos((1 - t) * np.pi)) / 2.0
+            return 1.0 - (base ** PHI_CONJUGATE)
+    
+    def _start_chakra_journey(self):
+        """Start the Chakra Sunrise journey"""
+        if self._is_chakra_playing:
+            return
+        
+        # Get parameters
+        base_freq = self.chakra_base_freq.get()
+        duration = self.chakra_duration.get()
+        
+        # Calculate the three frequencies
+        self._freq_fourth = base_freq * 4 / 3   # Perfect 4th
+        self._freq_root = base_freq             # Root/fundamental  
+        self._freq_octave = base_freq * 2       # Octave
+        
+        self._journey_duration = duration
+        
+        # Body positions (mm from head edge on 1950mm board)
+        HEAD_MM = 0.0
+        SOLAR_PLEXUS_MM = 600.0   # Convergence point
+        FEET_MM = 1750.0
+        
+        # Convert to pan values
+        PAN_SOLAR_PLEXUS = self._mm_to_pan(SOLAR_PLEXUS_MM)  # ≈ -0.38
+        PAN_HEAD = self._mm_to_pan(HEAD_MM)                   # -1.0
+        PAN_FEET = self._mm_to_pan(FEET_MM)                   # ≈ +0.79
+        
+        # Initialize amplitudes and positions
+        self._fourth_amp = 0.0
+        self._fourth_pan = PAN_SOLAR_PLEXUS  # Always at solar plexus
+        
+        self._root_amp = 0.0
+        self._root_pan = PAN_FEET            # Starts at feet
+        
+        self._octave_amp = 0.0
+        self._octave_pan = PAN_HEAD          # Starts at head
+        
+        # Update UI
+        self.chakra_play_btn.config(state='disabled')
+        self.chakra_stop_btn.config(state='normal')
+        
+        # Start audio engine
+        self._is_chakra_playing = True
+        self._chakra_start_time = time.time()
+        
+        # Start with 3 frequencies, all silent initially
+        self.audio.start_spectral(
+            [self._freq_fourth, self._freq_root, self._freq_octave],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [PAN_SOLAR_PLEXUS, PAN_FEET, PAN_HEAD],
+            master_amplitude=0.8
+        )
+        
+        # Start the journey callback
+        self._chakra_journey_callback()
+        self.chakra_state_label.config(text=f"🌅 Journey started: {duration:.0f}s")
+    
+    def _stop_chakra_journey(self):
+        """Stop the Chakra journey"""
+        self._is_chakra_playing = False
+        if self._chakra_timer:
+            self.frame.after_cancel(self._chakra_timer)
+            self._chakra_timer = None
+        
+        self.audio.stop()
+        self.chakra_play_btn.config(state='normal')
+        self.chakra_stop_btn.config(state='disabled')
+        self.chakra_progress['value'] = 0
+        self.chakra_state_label.config(text="Ready")
+    
+    def _chakra_journey_callback(self):
+        """
+        Animation callback for Chakra Sunrise journey.
+        
+        Body positions on 1950mm board:
+        - HEAD = 0mm → pan = -1.0
+        - SOLAR_PLEXUS = 600mm → pan ≈ -0.38
+        - SACRAL = 800mm → pan ≈ -0.18
+        - FEET = 1750mm → pan ≈ +0.79
+        
+        Timeline based on GOLDEN RATIO (φ ≈ 1.618):
+        Using φ-based divisions: each phase relates to next by φ
+        
+        Phase boundaries (golden spiral):
+        - Phase 1: 0.000 - 0.146  (14.6%)  4th fades in at SOLAR PLEXUS
+        - Phase 2: 0.146 - 0.382  (23.6%)  Root fades in at FEET, rises
+        - Phase 3: 0.382 - 0.618  (23.6%)  Root continues to SOLAR PLEXUS  
+        - Phase 4: 0.618 - 0.854  (23.6%)  Octave fades in at HEAD, descends
+        - Phase 5: 0.854 - 1.000  (14.6%)  CONVERGENCE at SOLAR PLEXUS
+        
+        The 14.6% and 23.6% come from φ: 1/φ³ ≈ 0.236, 1/φ⁴ ≈ 0.146
+        """
+        if not self._is_chakra_playing:
+            return
+        
+        elapsed = time.time() - self._chakra_start_time
+        duration = self._journey_duration
+        progress = min(elapsed / duration, 1.0)
+        
+        # Update progress bar
+        self.chakra_progress['value'] = progress * 100
+        
+        # Time display
+        remaining = duration - elapsed
+        mins = int(remaining // 60)
+        secs = int(remaining % 60)
+        time_str = f"{mins}:{secs:02d}"
+        
+        # Body positions
+        HEAD_MM = 0.0
+        SOLAR_PLEXUS_MM = 600.0
+        SACRAL_MM = 800.0
+        FEET_MM = 1750.0
+        
+        PAN_HEAD = self._mm_to_pan(HEAD_MM)
+        PAN_SOLAR_PLEXUS = self._mm_to_pan(SOLAR_PLEXUS_MM)
+        PAN_SACRAL = self._mm_to_pan(SACRAL_MM)
+        PAN_FEET = self._mm_to_pan(FEET_MM)
+        
+        # Golden phase boundaries (symmetric golden proportions: 1:φ:φ:φ:1)
+        # Total = 2 + 3φ ≈ 6.854, each unit = 1/6.854
+        # This creates: short intro, three golden middle phases, short outro
+        GOLDEN_UNIT = 1.0 / (2.0 + 3.0 * PHI)  # ≈ 0.146
+        GOLDEN_PHI_UNIT = PHI * GOLDEN_UNIT     # ≈ 0.236
+        
+        P1_END = GOLDEN_UNIT                                    # ≈ 0.146 (14.6%)
+        P2_END = GOLDEN_UNIT + GOLDEN_PHI_UNIT                  # ≈ 0.382 (38.2%)
+        P3_END = GOLDEN_UNIT + 2 * GOLDEN_PHI_UNIT              # ≈ 0.618 (61.8%)
+        P4_END = GOLDEN_UNIT + 3 * GOLDEN_PHI_UNIT              # ≈ 0.854 (85.4%)
+        # P5: 0.854 - 1.0 (14.6% - convergence)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PHASE 1: 0 - 23.6% - Perfect 4th FADES IN at SOLAR PLEXUS
+        # ═══════════════════════════════════════════════════════════════════
+        if progress < P1_END:
+            phase_progress = progress / P1_END
+            
+            self._fourth_amp = self._golden_fade(phase_progress, fade_in=True)
+            self._fourth_pan = PAN_SOLAR_PLEXUS
+            
+            self._root_amp = 0.0
+            self._root_pan = PAN_FEET
+            self._octave_amp = 0.0
+            self._octave_pan = PAN_HEAD
+            
+            self.chakra_state_label.config(
+                text=f"⚡ Phase 1: 4th emerging at solar plexus {self._fourth_amp*100:.0f}% ({time_str})")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PHASE 2: 23.6% - 38.2% - Root FADES IN at FEET, rises toward SACRAL
+        # ═══════════════════════════════════════════════════════════════════
+        elif progress < P2_END:
+            phase_progress = (progress - P1_END) / (P2_END - P1_END)
+            
+            self._fourth_amp = 1.0
+            self._fourth_pan = PAN_SOLAR_PLEXUS
+            
+            self._root_amp = self._golden_fade(phase_progress, fade_in=True)
+            pan_progress = self._golden_fade(phase_progress, fade_in=True)
+            self._root_pan = PAN_FEET + (PAN_SACRAL - PAN_FEET) * pan_progress
+            
+            self._octave_amp = 0.0
+            self._octave_pan = PAN_HEAD
+            
+            self.chakra_state_label.config(
+                text=f"🦶 Phase 2: Root rising from feet {self._root_amp*100:.0f}% ({time_str})")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PHASE 3: 38.2% - 61.8% - Root continues from SACRAL to SOLAR PLEXUS
+        # ═══════════════════════════════════════════════════════════════════
+        elif progress < P3_END:
+            phase_progress = (progress - P2_END) / (P3_END - P2_END)
+            
+            self._fourth_amp = 1.0
+            self._fourth_pan = PAN_SOLAR_PLEXUS
+            
+            self._root_amp = 1.0
+            pan_progress = self._golden_fade(phase_progress, fade_in=True)
+            self._root_pan = PAN_SACRAL + (PAN_SOLAR_PLEXUS - PAN_SACRAL) * pan_progress
+            
+            self._octave_amp = 0.0
+            self._octave_pan = PAN_HEAD
+            
+            self.chakra_state_label.config(
+                text=f"🌊 Phase 3: Root through sacral ({time_str})")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PHASE 4: 61.8% - 85.4% - Octave FADES IN at HEAD, descends to SOLAR PLEXUS
+        # ═══════════════════════════════════════════════════════════════════
+        elif progress < P4_END:
+            phase_progress = (progress - P3_END) / (P4_END - P3_END)
+            
+            self._fourth_amp = 1.0
+            self._fourth_pan = PAN_SOLAR_PLEXUS
+            
+            self._root_amp = 1.0
+            self._root_pan = PAN_SOLAR_PLEXUS
+            
+            self._octave_amp = self._golden_fade(phase_progress, fade_in=True)
+            pan_progress = self._golden_fade(phase_progress, fade_in=True)
+            self._octave_pan = PAN_HEAD + (PAN_SOLAR_PLEXUS - PAN_HEAD) * pan_progress
+            
+            self.chakra_state_label.config(
+                text=f"🧠 Phase 4: Octave descending {self._octave_amp*100:.0f}% ({time_str})")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # PHASE 5: 85.4% - 100% - CONVERGENCE at SOLAR PLEXUS
+        # Final golden segment: sustained unity
+        # ═══════════════════════════════════════════════════════════════════
+        else:
+            self._fourth_amp = 1.0
+            self._root_amp = 1.0
+            self._octave_amp = 1.0
+            
+            self._fourth_pan = PAN_SOLAR_PLEXUS
+            self._root_pan = PAN_SOLAR_PLEXUS
+            self._octave_pan = PAN_SOLAR_PLEXUS
+            
+            self.chakra_state_label.config(
+                text=f"✨ Phase 5: CONVERGENCE at φ ({time_str})")
+        
+        # Update audio with current state
+        self._update_chakra_audio()
+        
+        # Check completion
+        if progress >= 1.0:
+            self._is_chakra_playing = False
+            self.chakra_state_label.config(text="🌅 Journey complete! All frequencies united")
+            self.chakra_play_btn.config(state='normal')
+            self.chakra_stop_btn.config(state='disabled')
+            return
+        
+        # Schedule next frame (30ms for smooth golden transitions)
+        self._chakra_timer = self.frame.after(30, self._chakra_journey_callback)
+    
+    def _update_chakra_audio(self):
+        """Update audio parameters for Chakra journey"""
+        frequencies = [self._freq_fourth, self._freq_root, self._freq_octave]
+        amplitudes = [self._fourth_amp, self._root_amp, self._octave_amp]
+        phases = [0.0, 0.0, 0.0]
+        positions = [self._fourth_pan, self._root_pan, self._octave_pan]
+        
+        self.audio.set_spectral_params(frequencies, amplitudes, phases, positions)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
