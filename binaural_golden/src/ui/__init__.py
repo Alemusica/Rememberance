@@ -26,6 +26,7 @@ from .golden_theme import (
 from .vibroacoustic_tab import VibroacousticTab
 from .binaural_tab import BinauralTab
 from .spectral_tab import SpectralTab
+from .molecular_tab import MolecularTab
 
 __all__ = [
     # Theme
@@ -38,5 +39,6 @@ __all__ = [
     # Tabs
     'VibroacousticTab',
     'BinauralTab',
-    'SpectralTab'
+    'SpectralTab',
+    'MolecularTab'
 ]
