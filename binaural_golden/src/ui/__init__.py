@@ -25,6 +25,7 @@ from .golden_theme import (
 
 from .vibroacoustic_tab import VibroacousticTab
 from .binaural_tab import BinauralTab
+from .spectral_tab import SpectralTab
 
 __all__ = [
     # Theme
@@ -36,5 +37,6 @@ __all__ = [
     'GoldenCard', 'GoldenButton',
     # Tabs
     'VibroacousticTab',
-    'BinauralTab'
+    'BinauralTab',
+    'SpectralTab'
 ]
