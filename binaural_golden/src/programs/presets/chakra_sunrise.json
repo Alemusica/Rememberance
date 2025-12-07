@@ -1,0 +1,271 @@
+{
+  "name": "Chakra Sunrise",
+  "description": "Three frequencies (Root, Perfect 4th, Octave) converging at solar plexus using golden ratio proportions",
+  "base_frequency": 108.0,
+  "steps": [
+    {
+      "name": "4th Emerging",
+      "duration_sec": 17.507764050037856,
+      "frequencies": [
+        {
+          "frequency_hz": 144.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Perfect 4th"
+        },
+        {
+          "frequency_hz": 108.0,
+          "amplitude": 0.0,
+          "phase_offset_rad": 0.0,
+          "label": "Root"
+        },
+        {
+          "frequency_hz": 216.0,
+          "amplitude": 0.0,
+          "phase_offset_rad": 0.0,
+          "label": "Octave"
+        }
+      ],
+      "positions": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 1750.0,
+          "label": "FEET"
+        },
+        {
+          "position_mm": 0.0,
+          "label": "HEAD"
+        }
+      ],
+      "fade_in_sec": 17.507764050037856,
+      "fade_out_sec": 0.0,
+      "fade_curve": "golden",
+      "position_start": null,
+      "description": "Perfect 4th fades in at solar plexus"
+    },
+    {
+      "name": "Root Rising",
+      "duration_sec": 28.32815729997477,
+      "frequencies": [
+        {
+          "frequency_hz": 144.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Perfect 4th"
+        },
+        {
+          "frequency_hz": 108.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Root"
+        },
+        {
+          "frequency_hz": 216.0,
+          "amplitude": 0.0,
+          "phase_offset_rad": 0.0,
+          "label": "Octave"
+        }
+      ],
+      "positions": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 800.0,
+          "label": "SACRAL"
+        },
+        {
+          "position_mm": 0.0,
+          "label": "HEAD"
+        }
+      ],
+      "fade_in_sec": 28.32815729997477,
+      "fade_out_sec": 0.0,
+      "fade_curve": "golden",
+      "position_start": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 1750.0,
+          "label": "FEET"
+        },
+        {
+          "position_mm": 0.0,
+          "label": "HEAD"
+        }
+      ],
+      "description": "Root fades in at feet, rises toward sacral"
+    },
+    {
+      "name": "Root Through Sacral",
+      "duration_sec": 28.328157299974762,
+      "frequencies": [
+        {
+          "frequency_hz": 144.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Perfect 4th"
+        },
+        {
+          "frequency_hz": 108.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Root"
+        },
+        {
+          "frequency_hz": 216.0,
+          "amplitude": 0.0,
+          "phase_offset_rad": 0.0,
+          "label": "Octave"
+        }
+      ],
+      "positions": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 0.0,
+          "label": "HEAD"
+        }
+      ],
+      "fade_in_sec": 0.0,
+      "fade_out_sec": 0.0,
+      "fade_curve": "golden",
+      "position_start": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 800.0,
+          "label": "SACRAL"
+        },
+        {
+          "position_mm": 0.0,
+          "label": "HEAD"
+        }
+      ],
+      "description": "Root continues through sacral to solar plexus"
+    },
+    {
+      "name": "Octave Descending",
+      "duration_sec": 28.328157299974777,
+      "frequencies": [
+        {
+          "frequency_hz": 144.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Perfect 4th"
+        },
+        {
+          "frequency_hz": 108.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Root"
+        },
+        {
+          "frequency_hz": 216.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Octave"
+        }
+      ],
+      "positions": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        }
+      ],
+      "fade_in_sec": 28.328157299974777,
+      "fade_out_sec": 0.0,
+      "fade_curve": "golden",
+      "position_start": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 0.0,
+          "label": "HEAD"
+        }
+      ],
+      "description": "Octave fades in at head, descends to solar plexus"
+    },
+    {
+      "name": "Convergence",
+      "duration_sec": 17.507764050037835,
+      "frequencies": [
+        {
+          "frequency_hz": 144.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Perfect 4th"
+        },
+        {
+          "frequency_hz": 108.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Root"
+        },
+        {
+          "frequency_hz": 216.0,
+          "amplitude": 1.0,
+          "phase_offset_rad": 0.0,
+          "label": "Octave"
+        }
+      ],
+      "positions": [
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        },
+        {
+          "position_mm": 600.0,
+          "label": "SOLAR_PLEXUS"
+        }
+      ],
+      "fade_in_sec": 0.0,
+      "fade_out_sec": 0.0,
+      "fade_curve": "golden",
+      "position_start": null,
+      "description": "All three frequencies united at solar plexus (\u03c6 point)"
+    }
+  ],
+  "author": "Golden Sound Studio",
+  "created": "2025-12-07T09:55:53.409179",
+  "version": "1.0",
+  "tags": [
+    "chakra",
+    "vibroacoustic",
+    "golden ratio",
+    "convergence"
+  ],
+  "total_duration": 120.0
+}
