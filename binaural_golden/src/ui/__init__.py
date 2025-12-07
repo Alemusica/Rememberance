@@ -24,6 +24,7 @@ from .golden_theme import (
 )
 
 from .vibroacoustic_tab import VibroacousticTab
+from .binaural_tab import BinauralTab
 
 __all__ = [
     # Theme
@@ -34,5 +35,6 @@ __all__ = [
     'create_rounded_rectangle', 'golden_canvas',
     'GoldenCard', 'GoldenButton',
     # Tabs
-    'VibroacousticTab'
+    'VibroacousticTab',
+    'BinauralTab'
 ]
