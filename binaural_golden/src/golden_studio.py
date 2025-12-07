@@ -3592,7 +3592,21 @@ FEET exciter:  Delay {params['delay_feet_ms']:.3f} ms | Gain {params['gain_feet_
     def _mm_to_pan(self, position_mm):
         """
         Convert body position in mm to pan value (-1 to +1).
-        Board is 1950mm: HEAD at 0mm → -1.0, FEET at 1950mm → +1.0
+        
+        Physical setup:
+        - Wooden board 1950mm with longitudinal wood fibers
+        - Two speaker exciters: one at HEAD (0mm), one at FEET (1950mm)
+        - Sound propagates along wood fibers
+        - Pan -1.0 = 100% HEAD exciter, Pan +1.0 = 100% FEET exciter
+        
+        Body positions on board:
+        - HEAD:          0mm   → pan = -1.000
+        - SOLAR_PLEXUS:  600mm → pan = -0.385
+        - SACRAL:        800mm → pan = -0.179
+        - FEET:          1750mm → pan = +0.795
+        
+        The full range ±1.0 is intentional - it matches the physical
+        speaker placement and allows true localization along the body.
         """
         return (position_mm / 975.0) - 1.0
     
