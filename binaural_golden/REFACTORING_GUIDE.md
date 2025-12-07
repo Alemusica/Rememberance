@@ -12,11 +12,11 @@ The `golden_studio.py` file (4010 lines) is being refactored into a modular arch
 - [x] Create `Program/Step` system for sequences
 - [x] Move tests to `tests/` folder
 - [x] Generate `chakra_sunrise.json` preset
+- [x] Extract `VibroacousticTab` → `ui/vibroacoustic_tab.py` (~700 lines)
 - [ ] Extract `BinauralTab` → `ui/tabs/binaural_tab.py`
 - [ ] Extract `SpectralTab` → `ui/tabs/spectral_tab.py`
 - [ ] Extract `MolecularTab` → `ui/tabs/molecular_tab.py`
 - [ ] Extract `HarmonicTreeTab` → `ui/tabs/harmonic_tab.py`
-- [ ] Extract `VibroacousticTab` → `ui/tabs/vibroacoustic_tab.py`
 - [ ] Create reusable widgets
 - [ ] Integrate Program system with UI
 - [ ] Delete legacy `gui_*.py` files
