@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rememberance Therapy</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            padding: 20px;
+            touch-action: manipulation;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+        
+        .subtitle {
+            opacity: 0.8;
+            font-size: 0.9em;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .status {
+            text-align: center;
+            padding: 15px;
+            font-size: 1.2em;
+        }
+        
+        .status.idle { background: rgba(100, 100, 100, 0.3); }
+        .status.emdr { background: rgba(46, 213, 115, 0.3); }
+        .status.vibroacoustic { background: rgba(52, 152, 219, 0.3); }
+        
+        .mode-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .mode-btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 15px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+        
+        .mode-btn.active {
+            background: rgba(255, 255, 255, 0.4);
+            transform: scale(1.05);
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            opacity: 0.9;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            height: 40px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+        }
+        
+        input[type="range"]::-webkit-slider-track {
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+            margin-top: -8px;
+        }
+        
+        input[type="range"]::-moz-range-track {
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .value-display {
+            text-align: right;
+            font-size: 0.9em;
+            opacity: 0.8;
+            margin-top: -5px;
+        }
+        
+        select {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 1em;
+        }
+        
+        select option {
+            background: #667eea;
+            color: white;
+        }
+        
+        .big-button {
+            width: 100%;
+            padding: 20px;
+            border: none;
+            border-radius: 15px;
+            font-size: 1.3em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 10px;
+        }
+        
+        .start-btn {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+        }
+        
+        .stop-btn {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+        }
+        
+        .big-button:active {
+            transform: scale(0.95);
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .journey-list {
+            display: grid;
+            gap: 10px;
+        }
+        
+        .journey-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .journey-card:active {
+            transform: scale(0.98);
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .journey-title {
+            font-size: 1.2em;
+            margin-bottom: 5px;
+        }
+        
+        .journey-info {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #2ecc71 0%, #27ae60 100%);
+            transition: width 0.5s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌊 Rememberance</h1>
+            <div class="subtitle">Vibroacoustic Therapy</div>
+        </header>
+
+        <div class="card">
+            <div id="status" class="status idle">
+                Idle
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="mode-selector">
+                <button class="mode-btn active" data-mode="emdr" onclick="selectMode('emdr')">
+                    🧠 EMDR
+                </button>
+                <button class="mode-btn" data-mode="vibro" onclick="selectMode('vibro')">
+                    🎵 Vibroacoustic
+                </button>
+            </div>
+
+            <!-- EMDR Controls -->
+            <div id="emdr-controls">
+                <div class="control-group">
+                    <label>Journey Program</label>
+                    <select id="journey-select">
+                        <option value="">Manual Control</option>
+                        <option value="gentle_release">🌅 Gentle Release (5 min)</option>
+                        <option value="deep_processing">🔥 Deep Processing (10 min)</option>
+                        <option value="hemispheric_sync">🧠 Hemispheric Sync (8 min)</option>
+                        <option value="golden_spiral">🌀 Golden Spiral (12 min)</option>
+                    </select>
+                </div>
+
+                <div id="manual-controls">
+                    <div class="control-group">
+                        <label>Bilateral Speed</label>
+                        <input type="range" id="speed" min="0.5" max="2.0" step="0.1" value="1.0" 
+                               oninput="updateValue('speed', this.value)">
+                        <div class="value-display"><span id="speed-value">1.0</span> Hz</div>
+                    </div>
+
+                    <div class="control-group">
+                        <label>Frequency</label>
+                        <select id="frequency">
+                            <option value="396">🌊 Trauma Release (396 Hz)</option>
+                            <option value="417">🔄 Change Facilitation (417 Hz)</option>
+                            <option value="432" selected>🎵 Sacred 432 Hz</option>
+                            <option value="528">✨ DNA Repair (528 Hz)</option>
+                            <option value="639">💚 Connection (639 Hz)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label>Mode</label>
+                        <select id="bilateral-mode">
+                            <option value="standard">Standard EMDR</option>
+                            <option value="golden_phase" selected>φ Golden Phase</option>
+                            <option value="breathing">Breathing Sync</option>
+                            <option value="theta_pulse">Theta Pulse</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label>Volume</label>
+                        <input type="range" id="amplitude" min="0.1" max="1.0" step="0.1" value="0.5"
+                               oninput="updateValue('amplitude', this.value)">
+                        <div class="value-display"><span id="amplitude-value">0.5</span></div>
+                    </div>
+                </div>
+
+                <button id="emdr-start" class="big-button start-btn" onclick="startEMDR()">
+                    ▶ Start EMDR
+                </button>
+                <button id="emdr-stop" class="big-button stop-btn hidden" onclick="stopEMDR()">
+                    ⏹ Stop
+                </button>
+            </div>
+
+            <!-- Vibroacoustic Controls -->
+            <div id="vibro-controls" class="hidden">
+                <div class="control-group">
+                    <label>Carrier Frequency</label>
+                    <input type="range" id="vibro-freq" min="40" max="1000" step="1" value="432"
+                           oninput="updateValue('vibro-freq', this.value)">
+                    <div class="value-display"><span id="vibro-freq-value">432</span> Hz</div>
+                </div>
+
+                <div class="control-group">
+                    <label>Panning Speed</label>
+                    <input type="range" id="vibro-mod" min="0.01" max="0.5" step="0.01" value="0.1"
+                           oninput="updateValue('vibro-mod', this.value)">
+                    <div class="value-display"><span id="vibro-mod-value">0.1</span> Hz</div>
+                </div>
+
+                <button id="vibro-start" class="big-button start-btn" onclick="startVibro()">
+                    ▶ Start Vibroacoustic
+                </button>
+                <button id="vibro-stop" class="big-button stop-btn hidden" onclick="stopVibro()">
+                    ⏹ Stop
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'emdr';
+        let updateInterval = null;
+
+        function selectMode(mode) {
+            currentMode = mode;
+            
+            // Update button states
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === mode);
+            });
+            
+            // Show/hide controls
+            document.getElementById('emdr-controls').classList.toggle('hidden', mode !== 'emdr');
+            document.getElementById('vibro-controls').classList.toggle('hidden', mode !== 'vibro');
+        }
+
+        function updateValue(id, value) {
+            document.getElementById(id + '-value').textContent = parseFloat(value).toFixed(2);
+        }
+
+        async function startEMDR() {
+            const journey = document.getElementById('journey-select').value;
+            const isJourney = journey !== '';
+
+            const params = isJourney ? {
+                journey: journey
+            } : {
+                speed: parseFloat(document.getElementById('speed').value),
+                freq: parseFloat(document.getElementById('frequency').value),
+                mode: document.getElementById('bilateral-mode').value,
+                amplitude: parseFloat(document.getElementById('amplitude').value)
+            };
+
+            try {
+                const response = await fetch('/api/emdr/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('emdr-start').classList.add('hidden');
+                    document.getElementById('emdr-stop').classList.remove('hidden');
+                    startStatusUpdates();
+                }
+            } catch (error) {
+                alert('Error starting EMDR: ' + error);
+            }
+        }
+
+        async function stopEMDR() {
+            try {
+                await fetch('/api/emdr/stop', { method: 'POST' });
+                document.getElementById('emdr-start').classList.remove('hidden');
+                document.getElementById('emdr-stop').classList.add('hidden');
+                stopStatusUpdates();
+            } catch (error) {
+                alert('Error stopping EMDR: ' + error);
+            }
+        }
+
+        async function startVibro() {
+            const params = {
+                freq: parseFloat(document.getElementById('vibro-freq').value),
+                modulation: parseFloat(document.getElementById('vibro-mod').value)
+            };
+
+            try {
+                const response = await fetch('/api/vibro/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('vibro-start').classList.add('hidden');
+                    document.getElementById('vibro-stop').classList.remove('hidden');
+                    startStatusUpdates();
+                }
+            } catch (error) {
+                alert('Error starting vibroacoustic: ' + error);
+            }
+        }
+
+        async function stopVibro() {
+            try {
+                await fetch('/api/vibro/stop', { method: 'POST' });
+                document.getElementById('vibro-start').classList.remove('hidden');
+                document.getElementById('vibro-stop').classList.add('hidden');
+                stopStatusUpdates();
+            } catch (error) {
+                alert('Error stopping vibroacoustic: ' + error);
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                const statusEl = document.getElementById('status');
+                statusEl.className = 'status ' + data.mode;
+                
+                if (data.mode === 'emdr') {
+                    statusEl.textContent = '🧠 EMDR Active';
+                } else if (data.mode === 'vibroacoustic') {
+                    statusEl.textContent = '🎵 Vibroacoustic Active';
+                } else {
+                    statusEl.textContent = 'Idle';
+                }
+            } catch (error) {
+                console.error('Status update error:', error);
+            }
+        }
+
+        function startStatusUpdates() {
+            if (!updateInterval) {
+                updateInterval = setInterval(updateStatus, 1000);
+            }
+        }
+
+        function stopStatusUpdates() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            updateStatus();
+        }
+
+        // Initial status check
+        updateStatus();
+    </script>
+</body>
+</html>

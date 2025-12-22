@@ -1,0 +1,17 @@
+# Rememberance - Python Dependencies
+# Raspberry Pi Modular Architecture
+
+# Core audio
+numpy==1.24.3
+
+# Audio backends
+pyalsaaudio==0.10.0  # ALSA for Raspberry Pi
+# Note: PyAudio installed via apt on Pi (requires system libs)
+
+# Web interface
+flask==2.3.2
+flask-cors==4.0.0
+
+# Optional: Advanced features
+# scipy==1.10.1  # For advanced DSP filtering
+# matplotlib==3.7.1  # For visualization/analysis

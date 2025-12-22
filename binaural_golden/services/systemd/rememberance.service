@@ -1,0 +1,58 @@
+[Unit]
+Description=Rememberance Vibroacoustic Therapy Server
+Documentation=https://github.com/yourusername/rememberance
+After=network.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Working directory
+WorkingDirectory=/opt/rememberance
+
+# Python virtual environment
+Environment="PATH=/opt/rememberance/venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Audio backend (ALSA for Pi, PyAudio for desktop)
+Environment="AUDIO_BACKEND=alsa"
+
+# Flask configuration
+Environment="FLASK_ENV=production"
+Environment="FLASK_APP=interfaces/web/app.py"
+
+# Start command
+ExecStart=/opt/rememberance/venv/bin/python interfaces/web/app.py
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rememberance
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/rememberance
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Nice priority for real-time audio (lower = higher priority)
+Nice=-10
+
+# CPU affinity (optional - pin to specific cores on Pi 5)
+# CPUAffinity=2 3  # Use cores 2-3, leave 0-1 for system
+
+[Install]
+WantedBy=multi-user.target
