@@ -70,6 +70,14 @@ except ImportError:
     HAS_SOUNDBOARD = False
     print("⚠️ soundboard_panning.py not found")
 
+# Import EMDR bilateral stimulation module
+try:
+    from ui.emdr_tab import EMDRTab
+    HAS_EMDR = True
+except ImportError:
+    HAS_EMDR = False
+    print("⚠️ ui/emdr_tab.py not found")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUDIO ENGINE - REAL-TIME PARAMETER UPDATES, NO GLITCHES
@@ -238,8 +246,23 @@ class AudioEngine:
     # GOLDEN WAVE GENERATION
     # ══════════════════════════════════════════════════════════════════════════
     
+    def _golden_wave_vectorized(self, phases: np.ndarray, reversed: bool = True) -> np.ndarray:
+        """Generate golden wave samples (vectorized)"""
+        theta = phases % (2 * np.pi)
+        if reversed:
+            theta = 2 * np.pi - theta
+        
+        t = theta / (2 * np.pi)
+        rise = PHI_CONJUGATE
+        
+        result = np.zeros_like(t)
+        mask_rise = t < rise
+        result[mask_rise] = np.sin(np.pi * t[mask_rise] / rise / 2)
+        result[~mask_rise] = np.cos(np.pi * (t[~mask_rise] - rise) / (1 - rise) / 2)
+        return result
+    
     def _golden_wave_sample(self, phase: float, reversed: bool = True) -> float:
-        """Generate single golden wave sample"""
+        """Generate single golden wave sample (for backwards compatibility)"""
         theta = phase % (2 * np.pi)
         if reversed:
             theta = 2 * np.pi - theta
@@ -253,11 +276,11 @@ class AudioEngine:
             return np.cos(np.pi * (t - rise) / (1 - rise) / 2)
     
     # ══════════════════════════════════════════════════════════════════════════
-    # AUDIO GENERATION (callback)
+    # AUDIO GENERATION (callback) - VECTORIZED
     # ══════════════════════════════════════════════════════════════════════════
     
     def _generate_binaural_chunk(self, frame_count: int) -> bytes:
-        """Generate binaural stereo chunk"""
+        """Generate binaural stereo chunk - VECTORIZED VERSION"""
         with self.lock:
             freq_l = self.freq_left
             freq_r = self.freq_right
@@ -270,36 +293,36 @@ class AudioEngine:
         phase_inc_left = 2 * np.pi * freq_l / SAMPLE_RATE
         phase_inc_right = 2 * np.pi * freq_r / SAMPLE_RATE
         
+        # Generate phase arrays for the entire buffer (vectorized)
+        t = np.arange(frame_count, dtype=np.float32)
+        phases_left = self.phase_left + phase_inc_left * t
+        phases_right = self.phase_right + phase_off + phase_inc_right * t
+        
+        # Generate waveforms (vectorized)
+        if waveform == "sine":
+            left_samples = amp * np.sin(phases_left)
+            right_samples = amp * np.sin(phases_right)
+        elif waveform == "golden":
+            left_samples = amp * self._golden_wave_vectorized(phases_left, reversed=False)
+            right_samples = amp * self._golden_wave_vectorized(phases_right, reversed=False)
+        else:  # golden_reversed
+            left_samples = amp * self._golden_wave_vectorized(phases_left, reversed=True)
+            right_samples = amp * self._golden_wave_vectorized(phases_right, reversed=True)
+        
+        # Update phase accumulators for next buffer
+        self.phase_left = (self.phase_left + phase_inc_left * frame_count) % (2 * np.pi)
+        self.phase_right = (self.phase_right + phase_inc_right * frame_count) % (2 * np.pi)
+        
+        # Interleave stereo output
         output = np.empty(frame_count * 2, dtype=np.float32)
         
-        for i in range(frame_count):
-            if waveform == "sine":
-                left_sample = amp * np.sin(self.phase_left)
-                right_sample = amp * np.sin(self.phase_right + phase_off)
-            elif waveform == "golden":
-                left_sample = amp * self._golden_wave_sample(self.phase_left, reversed=False)
-                right_sample = amp * self._golden_wave_sample(self.phase_right + phase_off, reversed=False)
-            else:  # golden_reversed
-                left_sample = amp * self._golden_wave_sample(self.phase_left, reversed=True)
-                right_sample = amp * self._golden_wave_sample(self.phase_right + phase_off, reversed=True)
-            
-            # MONO MIX: Sum L+R and output to both channels
-            # At 180° phase with same frequency, this should be SILENCE!
-            if mono:
-                mono_sample = (left_sample + right_sample) / 2.0
-                output[i * 2] = mono_sample
-                output[i * 2 + 1] = mono_sample
-            else:
-                output[i * 2] = left_sample
-                output[i * 2 + 1] = right_sample
-            
-            self.phase_left += phase_inc_left
-            self.phase_right += phase_inc_right
-            
-            if self.phase_left > 2 * np.pi:
-                self.phase_left -= 2 * np.pi
-            if self.phase_right > 2 * np.pi:
-                self.phase_right -= 2 * np.pi
+        if mono:
+            mono_samples = (left_samples + right_samples) / 2.0
+            output[0::2] = mono_samples
+            output[1::2] = mono_samples
+        else:
+            output[0::2] = left_samples
+            output[1::2] = right_samples
         
         return output.tobytes()
     
@@ -307,92 +330,84 @@ class AudioEngine:
         """
         Generate spectral/molecular stereo chunk with multiple frequencies.
         
-        Uses PER-SAMPLE smooth interpolation to prevent clicks:
-        - Amplitudes smoothly approach target values
-        - Pan positions smoothly approach target values
-        - Soft limiting instead of hard normalization
+        VECTORIZED VERSION - Uses NumPy for high performance.
+        Smooth interpolation happens per-buffer (not per-sample) for efficiency.
         """
         with self.lock:
             freq_data = list(self.spectral_frequencies)
-            target_amps = list(self._target_amplitudes) if self._target_amplitudes else []
-            target_pans = list(self._target_positions) if self._target_positions else []
-            current_amps = list(self._current_amplitudes) if self._current_amplitudes else []
-            current_pans = list(self._current_positions) if self._current_positions else []
+            target_amps = np.array(self._target_amplitudes) if self._target_amplitudes else np.array([])
+            target_pans = np.array(self._target_positions) if self._target_positions else np.array([])
+            current_amps = np.array(self._current_amplitudes) if self._current_amplitudes else np.array([])
+            current_pans = np.array(self._current_positions) if self._current_positions else np.array([])
             master_amp = self.amplitude
         
         if not freq_data:
-            # Silence if no frequencies
             return np.zeros(frame_count * 2, dtype=np.float32).tobytes()
         
+        n_freqs = len(freq_data)
+        
+        # Ensure arrays are correct size
+        if len(self.spectral_phases) != n_freqs:
+            self.spectral_phases = [0.0] * n_freqs
+        if len(current_amps) != n_freqs:
+            current_amps = np.zeros(n_freqs)
+        if len(current_pans) != n_freqs:
+            current_pans = np.zeros(n_freqs)
+        if len(target_amps) != n_freqs:
+            target_amps = np.zeros(n_freqs)
+        if len(target_pans) != n_freqs:
+            target_pans = np.zeros(n_freqs)
+        
+        # Per-buffer smoothing (fast exponential approach)
+        # At 44100 Hz with 1024 buffer, we get ~43 buffers/sec
+        # smooth_factor = 0.15 means ~63% in ~7 buffers (~160ms)
+        amp_smooth = 0.12
+        pan_smooth = 0.08
+        
+        # Smooth current values toward targets (per-buffer, not per-sample)
+        current_amps = current_amps + (target_amps - current_amps) * amp_smooth
+        current_pans = current_pans + (target_pans - current_pans) * pan_smooth
+        
+        # Store smoothed values back
+        with self.lock:
+            self._current_amplitudes = current_amps.tolist()
+            self._current_positions = current_pans.tolist()
+        
+        # VECTORIZED GENERATION
         output_left = np.zeros(frame_count, dtype=np.float32)
         output_right = np.zeros(frame_count, dtype=np.float32)
         
-        # Ensure we have enough phase accumulators and smoothing trackers
-        while len(self.spectral_phases) < len(freq_data):
-            self.spectral_phases.append(0.0)
-        while len(current_amps) < len(freq_data):
-            current_amps.append(0.0)
-        while len(current_pans) < len(freq_data):
-            current_pans.append(0.0)
-        while len(target_amps) < len(freq_data):
-            target_amps.append(0.0)
-        while len(target_pans) < len(freq_data):
-            target_pans.append(0.0)
-        
-        # Smoothing coefficients (per sample)
-        # At 44100 Hz, we need VERY slow smoothing to avoid clicks
-        # The GUI updates targets every 30ms (~1323 samples)
-        # We want changes to take ~100-200ms to complete for smooth transitions
-        # 
-        # Time constant calculation: samples_to_63% = 1/coeff
-        # - 0.0001 = 10000 samples (~227ms) - ULTRA smooth
-        # - 0.00015 = 6667 samples (~151ms) - Very smooth  
-        # - 0.0002 = 5000 samples (~113ms) - Smooth
-        #
-        amp_smooth = 0.00012   # ~190ms to reach 63% - very smooth amplitude
-        pan_smooth = 0.00008   # ~280ms to reach 63% - ultra smooth panning
+        # Time array for this buffer
+        t = np.arange(frame_count, dtype=np.float32)
         
         for idx, (freq, _, phase_off) in enumerate(freq_data):
+            # Phase increment per sample
             phase_inc = 2 * np.pi * freq / SAMPLE_RATE
             
-            for i in range(frame_count):
-                # Smooth amplitude toward target
-                amp_diff = target_amps[idx] - current_amps[idx]
-                current_amps[idx] += amp_diff * amp_smooth
-                
-                # Smooth pan toward target
-                pan_diff = target_pans[idx] - current_pans[idx]
-                current_pans[idx] += pan_diff * pan_smooth
-                
-                # Use smoothed values
-                freq_amp = current_amps[idx]
-                pan = current_pans[idx]
-                
-                # Pan law: equal power with small minimum to avoid pure silence
-                # Add tiny epsilon to prevent one channel from being exactly 0
-                pan_angle = (pan + 1) * np.pi / 4
-                left_gain = max(0.02, np.cos(pan_angle))   # Min 2% to avoid silence
-                right_gain = max(0.02, np.sin(pan_angle))  # Min 2% to avoid silence
-                
-                sample = freq_amp * np.sin(self.spectral_phases[idx] + phase_off)
-                output_left[i] += sample * left_gain
-                output_right[i] += sample * right_gain
-                
-                self.spectral_phases[idx] += phase_inc
-                if self.spectral_phases[idx] > 2 * np.pi:
-                    self.spectral_phases[idx] -= 2 * np.pi
+            # Generate full buffer of phases
+            phases = self.spectral_phases[idx] + phase_off + phase_inc * t
+            
+            # Generate waveform (vectorized)
+            samples = current_amps[idx] * np.sin(phases)
+            
+            # Pan law (equal power)
+            pan = current_pans[idx]
+            pan_angle = (pan + 1) * np.pi / 4
+            left_gain = max(0.02, np.cos(pan_angle))
+            right_gain = max(0.02, np.sin(pan_angle))
+            
+            # Accumulate to output
+            output_left += samples * left_gain
+            output_right += samples * right_gain
+            
+            # Update phase accumulator for next buffer
+            self.spectral_phases[idx] = (self.spectral_phases[idx] + phase_inc * frame_count) % (2 * np.pi)
         
-        # Store updated smooth values back
-        with self.lock:
-            self._current_amplitudes = current_amps
-            self._current_positions = current_pans
-        
-        # Apply master amplitude first
+        # Apply master amplitude
         output_left *= master_amp
         output_right *= master_amp
         
-        # Simple hard clip to prevent damage - NO dynamic gain changes
-        # Dynamic limiting was causing discontinuities between buffers
+        # Hard clip
         np.clip(output_left, -1.0, 1.0, out=output_left)
         np.clip(output_right, -1.0, 1.0, out=output_right)
         
@@ -3946,11 +3961,19 @@ class GoldenSoundStudio:
         self.harmonic_tree_tab = HarmonicTreeTab(self.notebook, self.audio)
         self.vibroacoustic_tab = VibroacousticTab(self.notebook, self.audio)
         
+        # EMDR Tab (bilateral audio stimulation for hemispheric integration)
+        if HAS_EMDR:
+            self.emdr_tab = EMDRTab(self.notebook, self.audio)
+        
         self.notebook.add(self.binaural_tab.frame, text="🎵 Binaural Beats")
         self.notebook.add(self.spectral_tab.frame, text="⚛️ Spectral Sound")
         self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
         self.notebook.add(self.harmonic_tree_tab.frame, text="🌳 Harmonic Tree")
         self.notebook.add(self.vibroacoustic_tab.frame, text="🪵 Vibroacoustic")
+        
+        # Add EMDR tab if available
+        if HAS_EMDR:
+            self.notebook.add(self.emdr_tab.frame, text="🧠 EMDR")
         
         # Status bar
         status_frame = tk.Frame(self.root, bg='#1a1a2e')
@@ -3994,11 +4017,13 @@ class GoldenSoundStudio:
 ║   🧪 Tab 3: Molecular Sound - Play molecules (H₂O, CO₂, CH₄...)             ║
 ║   🌳 Tab 4: Harmonic Tree - Fundamental + Fibonacci harmonics               ║
 ║   🪵 Tab 5: Vibroacoustic - Soundboard panning (HEAD↔FEET)                  ║
+║   🧠 Tab 6: EMDR - Bilateral audio, hemispheric integration, annealing      ║
 ║                                                                              ║
 ║   Based on natural phyllotaxis patterns:                                     ║
 ║   • Harmonics at Fibonacci ratios (2f, 3f, 5f, 8f, 13f)                     ║
 ║   • Phases rotate by Golden Angle (137.5°) like sunflower seeds             ║
 ║   • Amplitudes decay by φ⁻ⁿ (natural growth pattern)                        ║
+║   • EMDR bilateral stimulation for trauma processing                         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
         """)
         self.root.mainloop()
