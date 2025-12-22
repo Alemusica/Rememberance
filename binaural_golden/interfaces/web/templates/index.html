@@ -58,19 +58,21 @@
         .status.idle { background: rgba(100, 100, 100, 0.3); }
         .status.emdr { background: rgba(46, 213, 115, 0.3); }
         .status.vibroacoustic { background: rgba(52, 152, 219, 0.3); }
+        .status.harmonic { background: rgba(155, 89, 182, 0.3); }
+        .status.spectral { background: rgba(230, 126, 34, 0.3); }
         
         .mode-selector {
-            display: flex;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 10px;
             margin-bottom: 20px;
         }
         
         .mode-btn {
-            flex: 1;
             padding: 15px;
             border: none;
             border-radius: 15px;
-            font-size: 1em;
+            font-size: 0.95em;
             font-weight: bold;
             cursor: pointer;
             transition: all 0.3s;
@@ -249,7 +251,13 @@
                     🧠 EMDR
                 </button>
                 <button class="mode-btn" data-mode="vibro" onclick="selectMode('vibro')">
-                    🎵 Vibroacoustic
+                    🎵 Vibro
+                </button>
+                <button class="mode-btn" data-mode="harmonic" onclick="selectMode('harmonic')">
+                    🌳 Harmonic
+                </button>
+                <button class="mode-btn" data-mode="spectral" onclick="selectMode('spectral')">
+                    ⚛️ Spectral
                 </button>
             </div>
 
@@ -334,6 +342,81 @@
                     ⏹ Stop
                 </button>
             </div>
+
+            <!-- Harmonic Tree Controls -->
+            <div id="harmonic-controls" class="hidden">
+                <div class="control-group">
+                    <label>Fundamental Frequency</label>
+                    <input type="range" id="harmonic-fund" min="100" max="800" step="1" value="432"
+                           oninput="updateValue('harmonic-fund', this.value)">
+                    <div class="value-display"><span id="harmonic-fund-value">432</span> Hz</div>
+                </div>
+
+                <div class="control-group">
+                    <label>Number of Harmonics</label>
+                    <input type="range" id="harmonic-num" min="3" max="13" step="1" value="5"
+                           oninput="updateValue('harmonic-num', this.value)">
+                    <div class="value-display"><span id="harmonic-num-value">5</span> harmonics</div>
+                </div>
+
+                <div class="control-group">
+                    <label>Harmonic Mode</label>
+                    <select id="harmonic-mode">
+                        <option value="fibonacci">🌀 Fibonacci (φ ratios)</option>
+                        <option value="integer">🔢 Integer (1, 2, 3...)</option>
+                        <option value="phi">φ Powers of Golden Ratio</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Progressive Growth Duration</label>
+                    <select id="harmonic-growth">
+                        <option value="0">⚡ Instant (no growth)</option>
+                        <option value="1">🌱 1 minute</option>
+                        <option value="6">🌿 6 minutes</option>
+                        <option value="12">🌳 12 minutes</option>
+                        <option value="24">🌲 24 minutes</option>
+                        <option value="48">🏔️ 48 minutes</option>
+                        <option value="60" selected>🌌 60 minutes (1 hour)</option>
+                    </select>
+                </div>
+
+                <button id="harmonic-start" class="big-button start-btn" onclick="startHarmonic()">
+                    ▶ Start Harmonic Tree
+                </button>
+                <button id="harmonic-stop" class="big-button stop-btn hidden" onclick="stopHarmonic()">
+                    ⏹ Stop
+                </button>
+            </div>
+
+            <!-- Spectral Sound Controls -->
+            <div id="spectral-controls" class="hidden">
+                <div class="control-group">
+                    <label>Element</label>
+                    <select id="spectral-element">
+                        <option value="hydrogen">💧 Hydrogen (Balmer Series)</option>
+                        <option value="oxygen">💨 Oxygen (Atmospheric)</option>
+                        <option value="helium">🎈 Helium (Visible)</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Phase Mode</label>
+                    <select id="spectral-phase">
+                        <option value="golden">🌟 Golden Angle (137.5°)</option>
+                        <option value="fibonacci">🌀 Fibonacci Phases</option>
+                        <option value="coherent">💫 Coherent (0°)</option>
+                        <option value="incoherent">🎲 Incoherent (Random)</option>
+                    </select>
+                </div>
+
+                <button id="spectral-start" class="big-button start-btn" onclick="startSpectral()">
+                    ▶ Start Spectral Sound
+                </button>
+                <button id="spectral-stop" class="big-button stop-btn hidden" onclick="stopSpectral()">
+                    ⏹ Stop
+                </button>
+            </div>
         </div>
     </div>
 
@@ -342,6 +425,7 @@
         let updateInterval = null;
 
         function selectMode(mode) {
+            console.log('🔄 Switching to mode:', mode);
             currentMode = mode;
             
             // Update button states
@@ -350,8 +434,18 @@
             });
             
             // Show/hide controls
-            document.getElementById('emdr-controls').classList.toggle('hidden', mode !== 'emdr');
-            document.getElementById('vibro-controls').classList.toggle('hidden', mode !== 'vibro');
+            const modes = ['emdr', 'vibro', 'harmonic', 'spectral'];
+            modes.forEach(m => {
+                const controlsId = m + '-controls';
+                const controlsEl = document.getElementById(controlsId);
+                if (controlsEl) {
+                    const shouldShow = m === mode;
+                    controlsEl.classList.toggle('hidden', !shouldShow);
+                    console.log(`  ${m}-controls: ${shouldShow ? 'shown' : 'hidden'}`);
+                } else {
+                    console.error(`❌ Element ${controlsId} not found!`);
+                }
+            });
         }
 
         function updateValue(id, value) {
@@ -434,6 +528,100 @@
                 stopStatusUpdates();
             } catch (error) {
                 alert('Error stopping vibroacoustic: ' + error);
+            }
+        }
+
+        async function startHarmonic() {
+            console.log('🌳 Starting harmonic tree...');
+            const growthMinutes = parseInt(document.getElementById('harmonic-growth').value);
+            const params = {
+                fundamental: parseFloat(document.getElementById('harmonic-fund').value),
+                num_harmonics: parseInt(document.getElementById('harmonic-num').value),
+                mode: document.getElementById('harmonic-mode').value,
+                amplitude: 0.5,
+                growth_enabled: growthMinutes > 0,
+                growth_duration: growthMinutes * 60  // Convert minutes to seconds
+            };
+            console.log('  Params:', params);
+
+            try {
+                const response = await fetch('/api/harmonic/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+
+                const data = await response.json();
+                console.log('  Response:', data);
+                
+                if (data.success) {
+                    document.getElementById('harmonic-start').classList.add('hidden');
+                    document.getElementById('harmonic-stop').classList.remove('hidden');
+                    startStatusUpdates();
+                    console.log('✅ Harmonic tree started');
+                } else {
+                    console.error('❌ Failed to start:', data);
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('❌ Exception:', error);
+                alert('Error starting harmonic tree: ' + error);
+            }
+        }
+
+        async function stopHarmonic() {
+            try {
+                await fetch('/api/harmonic/stop', { method: 'POST' });
+                document.getElementById('harmonic-start').classList.remove('hidden');
+                document.getElementById('harmonic-stop').classList.add('hidden');
+                stopStatusUpdates();
+            } catch (error) {
+                alert('Error stopping harmonic tree: ' + error);
+            }
+        }
+
+        async function startSpectral() {
+            console.log('⚛️ Starting spectral sound...');
+            const params = {
+                element: document.getElementById('spectral-element').value,
+                phase_mode: document.getElementById('spectral-phase').value,
+                amplitude: 0.5
+            };
+            console.log('  Params:', params);
+
+            try {
+                const response = await fetch('/api/spectral/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+
+                const data = await response.json();
+                console.log('  Response:', data);
+                
+                if (data.success) {
+                    document.getElementById('spectral-start').classList.add('hidden');
+                    document.getElementById('spectral-stop').classList.remove('hidden');
+                    startStatusUpdates();
+                    console.log('✅ Spectral sound started');
+                } else {
+                    console.error('❌ Failed to start:', data);
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('❌ Exception:', error);
+                alert('Error starting spectral sound: ' + error);
+            }
+        }
+
+        async function stopSpectral() {
+            try {
+                await fetch('/api/spectral/stop', { method: 'POST' });
+                document.getElementById('spectral-start').classList.remove('hidden');
+                document.getElementById('spectral-stop').classList.add('hidden');
+                stopStatusUpdates();
+            } catch (error) {
+                alert('Error stopping spectral sound: ' + error);
             }
         }
 

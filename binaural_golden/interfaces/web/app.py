@@ -22,8 +22,10 @@ from flask_cors import CORS
 import sys
 import os
 
-# Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add binaural_golden directory to path for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))  # interfaces/web/
+binaural_golden_dir = os.path.dirname(os.path.dirname(current_dir))  # binaural_golden/
+sys.path.insert(0, binaural_golden_dir)
 
 from core.audio_backend import create_audio_backend, AudioBackend
 from modules.emdr import (
@@ -32,6 +34,12 @@ from modules.emdr import (
 )
 from modules.vibroacoustic import (
     VibroacousticPanner, VibroacousticProgram
+)
+from modules.harmonic_tree import (
+    HarmonicTreeGenerator, HarmonicMode, AmplitudeDecay
+)
+from modules.spectral import (
+    SpectralSoundGenerator, PhaseMode, ELEMENTS
 )
 
 
@@ -44,13 +52,15 @@ emdr_generator: EMDRGenerator = None
 emdr_journey: EMDRJourney = None
 vibro_program: VibroacousticProgram = None
 vibro_panner: VibroacousticPanner = None
+harmonic_tree: HarmonicTreeGenerator = None
+spectral_sound: SpectralSoundGenerator = None
 
-current_mode = "idle"  # "idle", "emdr", "vibroacoustic"
+current_mode = "idle"  # "idle", "emdr", "vibroacoustic", "harmonic", "spectral"
 
 
 def init_audio():
     """Initialize audio backend"""
-    global audio_backend, emdr_generator, vibro_panner
+    global audio_backend, emdr_generator, vibro_panner, harmonic_tree, spectral_sound
     
     # Create backend (auto-detect Pi vs desktop)
     audio_backend = create_audio_backend(
@@ -62,12 +72,30 @@ def init_audio():
     # Create generators
     emdr_generator = EMDRGenerator(sample_rate=48000)
     vibro_panner = VibroacousticPanner(sample_rate=48000, num_channels=2)
+    harmonic_tree = HarmonicTreeGenerator(sample_rate=48000)
+    spectral_sound = SpectralSoundGenerator(sample_rate=48000)
     
     print("✓ Audio system initialized")
 
 
 def emdr_callback(num_frames: int):
     """Audio callback for EMDR mode"""
+    return emdr_generator.generate_frame(num_frames)
+
+
+def vibro_callback(num_frames: int):
+    """Audio callback for vibroacoustic mode"""
+    return vibro_program.generate_frame(num_frames)
+
+
+def harmonic_callback(num_frames: int):
+    """Audio callback for harmonic tree mode"""
+    return harmonic_tree.generate_frame(num_frames)
+
+
+def spectral_callback(num_frames: int):
+    """Audio callback for spectral sound mode"""
+    return spectral_sound.generate_frame(num_frames)
     return emdr_generator.generate_frame(num_frames)
 
 
@@ -327,6 +355,149 @@ def api_vibro_stop():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# HARMONIC TREE ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/harmonic/start', methods=['POST'])
+def api_harmonic_start():
+    """Start harmonic tree"""
+    global current_mode
+    
+    if current_mode != "idle":
+        return jsonify({"error": f"Already in {current_mode} mode"}), 400
+    
+    data = request.json
+    fundamental = data.get('fundamental', 432.0)
+    num_harmonics = data.get('num_harmonics', 5)
+    mode = data.get('mode', 'fibonacci')
+    amplitude = data.get('amplitude', 0.5)
+    growth = data.get('growth_enabled', True)
+    growth_duration = data.get('growth_duration', 60)
+    
+    try:
+        harmonic_tree.set_parameters(
+            fundamental=fundamental,
+            num_harmonics=num_harmonics,
+            harmonic_mode=HarmonicMode[mode.upper()],
+            amplitude=amplitude
+        )
+        harmonic_tree.set_growth(growth, growth_duration)
+        harmonic_tree.start()
+        audio_backend.start(harmonic_callback)
+        current_mode = "harmonic"
+        
+        return jsonify({
+            "success": True,
+            "fundamental": fundamental,
+            "num_harmonics": num_harmonics,
+            "mode": mode,
+            "growth_enabled": growth
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/harmonic/stop', methods=['POST'])
+def api_harmonic_stop():
+    """Stop harmonic tree"""
+    global current_mode
+    
+    if current_mode != "harmonic":
+        return jsonify({"error": "Not in harmonic mode"}), 400
+    
+    try:
+        harmonic_tree.stop()
+        audio_backend.stop()
+        current_mode = "idle"
+        
+        return jsonify({"success": True})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SPECTRAL SOUND ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/spectral/start', methods=['POST'])
+def api_spectral_start():
+    """Start spectral sound"""
+    global current_mode
+    
+    if current_mode != "idle":
+        return jsonify({"error": f"Already in {current_mode} mode"}), 400
+    
+    data = request.json
+    element = data.get('element', 'hydrogen')
+    phase_mode = data.get('phase_mode', 'golden')
+    amplitude = data.get('amplitude', 0.5)
+    
+    try:
+        spectral_sound.set_parameters(
+            element=element,
+            phase_mode=PhaseMode[phase_mode.upper()],
+            amplitude=amplitude
+        )
+        spectral_sound.start()
+        audio_backend.start(spectral_callback)
+        current_mode = "spectral"
+        
+        return jsonify({
+            "success": True,
+            "element": element,
+            "phase_mode": phase_mode
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/spectral/stop', methods=['POST'])
+def api_spectral_stop():
+    """Stop spectral sound"""
+    global current_mode
+    
+    if current_mode != "spectral":
+        return jsonify({"error": "Not in spectral mode"}), 400
+    
+    try:
+        spectral_sound.stop()
+        audio_backend.stop()
+        current_mode = "idle"
+        
+        return jsonify({"success": True})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/spectral/elements')
+def api_spectral_elements():
+    """Get available elements"""
+    return jsonify({
+        "elements": list(ELEMENTS.keys())
+    })
+
+
+@app.route('/api/test')
+def api_test():
+    """Test endpoint to verify API is working"""
+    return jsonify({
+        "status": "ok",
+        "modules": {
+            "emdr": emdr is not None,
+            "vibroacoustic": vibro_panner is not None,
+            "harmonic_tree": harmonic_tree is not None,
+            "spectral_sound": spectral_sound is not None
+        },
+        "backend": audio_backend.__class__.__name__,
+        "current_mode": current_mode
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # STARTUP
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -345,13 +516,16 @@ def main():
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
     
+    # Use port from environment or default to 5001
+    port = int(os.environ.get('FLASK_PORT', 5001))
+    
     print(f"\n🌐 Web interface starting...")
-    print(f"   Local:   http://localhost:5000")
-    print(f"   Network: http://{local_ip}:5000")
+    print(f"   Local:   http://localhost:{port}")
+    print(f"   Network: http://{local_ip}:{port}")
     print(f"\n📱 Open this URL on your phone/tablet\n")
     
     # Start Flask (use 0.0.0.0 to allow network access)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 
 if __name__ == '__main__':
