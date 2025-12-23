@@ -168,7 +168,7 @@ class PieChartWidget(tk.Canvas):
                     lx, ly,
                     text=name,
                     fill=Colors.TEXT_PRIMARY,
-                    font=(Typography.FONT_FAMILY, FontSize.CAPTION, 'bold'),
+                    font=(Typography.FAMILY_SANS[0], FontSize.CAPTION, 'bold'),
                     anchor='center',
                     tags=f'label_{i}'
                 )
@@ -196,13 +196,13 @@ class PieChartWidget(tk.Canvas):
             cx, cy - 8,
             text=time_text,
             fill=Colors.GOLD,
-            font=(Typography.FONT_FAMILY, FontSize.BODY_LG, 'bold')
+            font=(Typography.FAMILY_SANS[0], FontSize.BODY_LG, 'bold')
         )
         self.create_text(
             cx, cy + 12,
             text=f"{len(self.steps)} steps",
             fill=Colors.TEXT_SECONDARY,
-            font=(Typography.FONT_FAMILY, FontSize.CAPTION)
+            font=(Typography.FAMILY_SANS[0], FontSize.CAPTION)
         )
         
     def _draw_empty(self):
@@ -225,13 +225,13 @@ class PieChartWidget(tk.Canvas):
             cx, cy - 10,
             text="No Session",
             fill=Colors.TEXT_TERTIARY,
-            font=(Typography.FONT_FAMILY, FontSize.BODY_LG)
+            font=(Typography.FAMILY_SANS[0], FontSize.BODY_LG)
         )
         self.create_text(
             cx, cy + 15,
             text="Load or create a program",
             fill=Colors.TEXT_TERTIARY,
-            font=(Typography.FONT_FAMILY, FontSize.CAPTION)
+            font=(Typography.FAMILY_SANS[0], FontSize.CAPTION)
         )
         
     def _get_slice_at(self, x: int, y: int) -> int:
@@ -446,7 +446,7 @@ class FlowChartWidget(tk.Canvas):
                 x + 4 + badge_size / 2, node_y + 4 + badge_size / 2,
                 text=str(i + 1),
                 fill=Colors.TEXT_PRIMARY,
-                font=(Typography.FONT_FAMILY, FontSize.CAPTION, 'bold')
+                font=(Typography.FAMILY_SANS[0], FontSize.CAPTION, 'bold')
             )
             
             # Step name
@@ -458,7 +458,7 @@ class FlowChartWidget(tk.Canvas):
                 x + self.NODE_WIDTH / 2, cy - 5,
                 text=name,
                 fill=Colors.TEXT_INVERSE,
-                font=(Typography.FONT_FAMILY, FontSize.CAPTION, 'bold'),
+                font=(Typography.FAMILY_SANS[0], FontSize.CAPTION, 'bold'),
                 width=self.NODE_WIDTH - 10,
                 anchor='center'
             )
@@ -474,7 +474,7 @@ class FlowChartWidget(tk.Canvas):
                 x + self.NODE_WIDTH / 2, cy + 15,
                 text=dur_text,
                 fill=Colors.TEXT_INVERSE,
-                font=(Typography.FONT_FAMILY, FontSize.CAPTION),
+                font=(Typography.FAMILY_SANS[0], FontSize.CAPTION),
                 anchor='center'
             )
             
@@ -491,7 +491,7 @@ class FlowChartWidget(tk.Canvas):
             x - self.CONNECTOR_LENGTH + 13, cy,
             text="▶",
             fill=Colors.BG_BASE,
-            font=(Typography.FONT_FAMILY, FontSize.CAPTION)
+            font=(Typography.FAMILY_SANS[0], FontSize.CAPTION)
         )
         
     def _draw_empty(self):
@@ -503,7 +503,7 @@ class FlowChartWidget(tk.Canvas):
             width / 2, height / 2,
             text="No steps - Add or load a program",
             fill=Colors.TEXT_TERTIARY,
-            font=(Typography.FONT_FAMILY, FontSize.BODY)
+            font=(Typography.FAMILY_SANS[0], FontSize.BODY)
         )
         
     def _on_click(self, event):
@@ -545,7 +545,7 @@ class StepEditorPanel(ttk.Frame):
         self.title_label = ttk.Label(
             self,
             text="Step Editor",
-            font=(Typography.FONT_FAMILY, FontSize.H6, 'bold')
+            font=(Typography.FAMILY_SANS[0], FontSize.H6, 'bold')
         )
         self.title_label.pack(pady=(0, Spacing.MD), anchor='w')
         
@@ -887,7 +887,7 @@ class SessionBuilderTab(ttk.Frame):
         pie_label = ttk.Label(
             left_frame,
             text="Session Overview",
-            font=(Typography.FONT_FAMILY, FontSize.H6, 'bold')
+            font=(Typography.FAMILY_SANS[0], FontSize.H6, 'bold')
         )
         pie_label.pack(pady=(0, Spacing.SM))
         

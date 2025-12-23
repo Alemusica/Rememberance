@@ -78,6 +78,14 @@ except ImportError:
     HAS_EMDR = False
     print("⚠️ ui/emdr_tab.py not found")
 
+# Import Session Builder module
+try:
+    from ui.session_builder_tab import SessionBuilderTab
+    HAS_SESSION_BUILDER = True
+except ImportError:
+    HAS_SESSION_BUILDER = False
+    print("⚠️ ui/session_builder_tab.py not found")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUDIO ENGINE - REAL-TIME PARAMETER UPDATES, NO GLITCHES
@@ -3965,6 +3973,10 @@ class GoldenSoundStudio:
         if HAS_EMDR:
             self.emdr_tab = EMDRTab(self.notebook, self.audio)
         
+        # Session Builder Tab (visual program designer)
+        if HAS_SESSION_BUILDER:
+            self.session_builder_tab = SessionBuilderTab(self.notebook)
+        
         self.notebook.add(self.binaural_tab.frame, text="🎵 Binaural Beats")
         self.notebook.add(self.spectral_tab.frame, text="⚛️ Spectral Sound")
         self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
@@ -3974,6 +3986,10 @@ class GoldenSoundStudio:
         # Add EMDR tab if available
         if HAS_EMDR:
             self.notebook.add(self.emdr_tab.frame, text="🧠 EMDR")
+        
+        # Add Session Builder tab if available
+        if HAS_SESSION_BUILDER:
+            self.notebook.add(self.session_builder_tab, text="🎼 Session Builder")
         
         # Status bar
         status_frame = tk.Frame(self.root, bg='#1a1a2e')
@@ -4018,12 +4034,13 @@ class GoldenSoundStudio:
 ║   🌳 Tab 4: Harmonic Tree - Fundamental + Fibonacci harmonics               ║
 ║   🪵 Tab 5: Vibroacoustic - Soundboard panning (HEAD↔FEET)                  ║
 ║   🧠 Tab 6: EMDR - Bilateral audio, hemispheric integration, annealing      ║
+║   🎼 Tab 7: Session Builder - Visual program designer with pie chart        ║
 ║                                                                              ║
 ║   Based on natural phyllotaxis patterns:                                     ║
 ║   • Harmonics at Fibonacci ratios (2f, 3f, 5f, 8f, 13f)                     ║
 ║   • Phases rotate by Golden Angle (137.5°) like sunflower seeds             ║
 ║   • Amplitudes decay by φ⁻ⁿ (natural growth pattern)                        ║
-║   • EMDR bilateral stimulation for trauma processing                         ║
+║   • Session Builder: Pie chart + flowchart timeline for journey design     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
         """)
         self.root.mainloop()
