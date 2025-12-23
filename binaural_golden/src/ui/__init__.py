@@ -29,6 +29,7 @@ from .spectral_tab import SpectralTab
 from .molecular_tab import MolecularTab
 from .harmonic_tree_tab import HarmonicTreeTab
 from .emdr_tab import EMDRTab
+from .session_builder_tab import SessionBuilderTab
 
 __all__ = [
     # Theme
@@ -44,5 +45,6 @@ __all__ = [
     'SpectralTab',
     'MolecularTab',
     'HarmonicTreeTab',
-    'EMDRTab'
+    'EMDRTab',
+    'SessionBuilderTab',
 ]
