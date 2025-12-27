@@ -84,8 +84,8 @@ class Style:
     ACCENT_BLUE = "#4a90d9"
     
     # Text (higher contrast)
-    TEXT_LIGHT = "#f5f5f5"      # Brighter white
-    TEXT_MUTED = "#a0a0b8"      # Lighter muted
+    TEXT_LIGHT = "#ffffff"      # Pure white for max contrast
+    TEXT_MUTED = "#b0b0c8"      # Brighter muted
     TEXT_DARK = "#1a1a2e"       # For light backgrounds
     
     # Status colors
@@ -93,11 +93,11 @@ class Style:
     WARNING = "#ff9800"
     ERROR = "#f44336"
     
-    # Fonts (larger for readability)
-    FONT_LABEL = ("Segoe UI", 11)
-    FONT_HEADER = ("Segoe UI", 13, "bold")
-    FONT_MONO = ("Consolas", 11)
-    FONT_SMALL = ("Segoe UI", 10)
+    # Fonts (LARGER for better readability on HiDPI)
+    FONT_LABEL = ("SF Pro Display", 13)
+    FONT_HEADER = ("SF Pro Display", 15, "bold")
+    FONT_MONO = ("SF Mono", 12)
+    FONT_SMALL = ("SF Pro Display", 11)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1363,7 +1363,6 @@ class PlateLabTab:
                 # Update modes from optimization
                 if result.modes:
                     self.modes = result.modes
-                    self._update_mode_list()
                     self._update_visualization()
                 
                 # Show result
@@ -1496,6 +1495,71 @@ class PlateLabTab:
         
         # Store result for export
         self.optimization_result = result
+        
+        # Show density visualization
+        self._show_density_visualization(result)
+    
+    def _show_density_visualization(self, result: Dict):
+        """Show the optimized density field in a matplotlib window."""
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.colors import LinearSegmentedColormap
+        except ImportError:
+            return  # Skip if matplotlib not available
+        
+        density = result.get('density')
+        if density is None:
+            return
+        
+        # Create custom golden colormap
+        colors = ['#1a1a2e', '#3d3d6b', '#ffd700', '#ffffff']
+        cmap = LinearSegmentedColormap.from_list('golden', colors, N=256)
+        
+        # Create figure
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        fig.suptitle('🎯 Design Tavola Ottimizzato - Zone Corporee', fontsize=14, fontweight='bold')
+        
+        # Left: Density field
+        ax1 = axes[0]
+        im1 = ax1.imshow(density.T, cmap=cmap, origin='lower', aspect='auto',
+                         extent=[0, 2.0, 0, 0.6])  # Assume 2m x 0.6m
+        ax1.set_xlabel('Lunghezza (m)', fontsize=11)
+        ax1.set_ylabel('Larghezza (m)', fontsize=11)
+        ax1.set_title('Distribuzione Densità Materiale', fontsize=12)
+        cbar1 = plt.colorbar(im1, ax=ax1)
+        cbar1.set_label('Densità (0=vuoto, 1=pieno)', fontsize=10)
+        
+        # Add zone markers
+        zones = result.get('zones', [])
+        frequencies = result.get('frequencies', [])
+        
+        # Right: Frequency response
+        ax2 = axes[1]
+        target_freqs = [z.f_center for z in zones] if zones else []
+        
+        if frequencies is not None and len(frequencies) > 0:
+            x = np.arange(len(frequencies))
+            bars = ax2.bar(x, frequencies, color='#ffd700', alpha=0.8, label='Modi calcolati')
+            
+            # Mark target frequencies
+            if target_freqs:
+                for i, tf in enumerate(target_freqs[:len(frequencies)]):
+                    ax2.axhline(y=tf, color='#ff6b6b', linestyle='--', alpha=0.5)
+            
+            ax2.set_xlabel('Indice Modo', fontsize=11)
+            ax2.set_ylabel('Frequenza (Hz)', fontsize=11)
+            ax2.set_title('Frequenze Modali vs Target Zone', fontsize=12)
+            ax2.legend()
+        
+        # Coupling score annotation
+        coupling = result.get('coupling_score', 0)
+        fig.text(0.5, 0.02, f'Coupling Score: {coupling:.1%}', ha='center', fontsize=12, 
+                 fontweight='bold', color='#ffd700',
+                 bbox=dict(boxstyle='round', facecolor='#1a1a2e', edgecolor='#ffd700'))
+        
+        plt.tight_layout()
+        plt.subplots_adjust(bottom=0.1)
+        plt.show()
     
     def _show_optimization_error(self, error_msg: str):
         """Display optimization error."""

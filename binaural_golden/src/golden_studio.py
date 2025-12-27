@@ -86,6 +86,14 @@ except ImportError:
     HAS_SESSION_BUILDER = False
     print("⚠️ ui/session_builder_tab.py not found")
 
+# Import Plate Lab module (modal analysis)
+try:
+    from ui.plate_lab_tab import PlateLabTab
+    HAS_PLATE_LAB = True
+except ImportError:
+    HAS_PLATE_LAB = False
+    print("⚠️ ui/plate_lab_tab.py not found")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUDIO ENGINE - REAL-TIME PARAMETER UPDATES, NO GLITCHES
@@ -3977,6 +3985,10 @@ class GoldenSoundStudio:
         if HAS_SESSION_BUILDER:
             self.session_builder_tab = SessionBuilderTab(self.notebook)
         
+        # Plate Lab Tab (modal analysis for vibroacoustic)
+        if HAS_PLATE_LAB:
+            self.plate_lab_tab = PlateLabTab(self.notebook, self.audio)
+        
         self.notebook.add(self.binaural_tab.frame, text="🎵 Binaural Beats")
         self.notebook.add(self.spectral_tab.frame, text="⚛️ Spectral Sound")
         self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
@@ -3990,6 +4002,10 @@ class GoldenSoundStudio:
         # Add Session Builder tab if available
         if HAS_SESSION_BUILDER:
             self.notebook.add(self.session_builder_tab, text="🎼 Session Builder")
+        
+        # Add Plate Lab tab if available
+        if HAS_PLATE_LAB:
+            self.notebook.add(self.plate_lab_tab.frame, text="🔬 Plate Lab")
         
         # Status bar
         status_frame = tk.Frame(self.root, bg='#1a1a2e')
