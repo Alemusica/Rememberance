@@ -260,15 +260,10 @@ def solve_eigenvalues_jax(
         # Transform back
         eigenvectors = L_inv.T @ Y
         
-        # Sort by eigenvalue (ascending)
-        idx = jnp.argsort(eigenvalues)
-        eigenvalues = eigenvalues[idx]
-        eigenvectors = eigenvectors[:, idx]
-        
-        # Take first n_modes positive eigenvalues
-        pos_mask = eigenvalues > 1e-6
-        eigenvalues = eigenvalues[pos_mask][:n_modes]
-        eigenvectors = eigenvectors[:, pos_mask][:, :n_modes]
+        # Sort by eigenvalue (ascending) - already sorted by eigh
+        # Take first n_modes (eigenvalues are already positive for symmetric matrices)
+        eigenvalues = eigenvalues[:n_modes]
+        eigenvectors = eigenvectors[:, :n_modes]
         
         return eigenvalues, eigenvectors
         

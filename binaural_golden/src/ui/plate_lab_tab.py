@@ -550,6 +550,9 @@ class PlateLabTab:
         self.temp_polygon_ids: List[int] = []
         self.dragging_exciter: Optional[int] = None
         
+        # Optimization results
+        self.optimization_result: Optional[Dict] = None
+        
         # Canvas dimensions
         self.canvas_width = 600
         self.canvas_height = 400
@@ -702,6 +705,64 @@ class PlateLabTab:
                 activeforeground=Style.ACCENT_GOLD
             )
             rb.pack(anchor="w", padx=10)
+        
+        # ── Zone-Based Optimizer ───────────────────────────────────────────────
+        opt_frame = tk.LabelFrame(
+            parent, text="🎯 Ottimizzazione Zone Corporee",
+            bg=Style.BG_PANEL, fg=Style.ACCENT_GOLD,
+            font=Style.FONT_HEADER
+        )
+        opt_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Zone preset selection
+        preset_frame = tk.Frame(opt_frame, bg=Style.BG_PANEL)
+        preset_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(preset_frame, text="Preset Zone:", bg=Style.BG_PANEL,
+                fg=Style.TEXT_LIGHT, font=Style.FONT_LABEL).pack(side=tk.LEFT, padx=5)
+        
+        self.zone_preset_var = tk.StringVar(value="chakra")
+        zone_combo = ttk.Combobox(
+            preset_frame,
+            textvariable=self.zone_preset_var,
+            values=["chakra", "vat", "body_resonance"],
+            state="readonly",
+            width=15
+        )
+        zone_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Optimization parameters
+        opt_param_frame = tk.Frame(opt_frame, bg=Style.BG_PANEL)
+        opt_param_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(opt_param_frame, text="Iterazioni:", bg=Style.BG_PANEL,
+                fg=Style.TEXT_LIGHT, font=Style.FONT_LABEL).grid(row=0, column=0, sticky="w")
+        self.opt_iterations_var = tk.StringVar(value="30")
+        tk.Entry(opt_param_frame, textvariable=self.opt_iterations_var, width=8,
+                bg=Style.BG_DARK, fg=Style.TEXT_LIGHT).grid(row=0, column=1, padx=5)
+        
+        tk.Label(opt_param_frame, text="Volume (%):", bg=Style.BG_PANEL,
+                fg=Style.TEXT_LIGHT, font=Style.FONT_LABEL).grid(row=1, column=0, sticky="w")
+        self.opt_volume_var = tk.StringVar(value="50")
+        tk.Entry(opt_param_frame, textvariable=self.opt_volume_var, width=8,
+                bg=Style.BG_DARK, fg=Style.TEXT_LIGHT).grid(row=1, column=1, padx=5)
+        
+        # Optimize button
+        tk.Button(
+            opt_frame, text="⚡ OTTIMIZZA DESIGN",
+            bg="#ff6600", fg="white",
+            activebackground="#ff8833",
+            font=Style.FONT_LABEL,
+            command=self._run_zone_optimization
+        ).pack(fill=tk.X, padx=5, pady=5)
+        
+        # Results display
+        self.opt_result_label = tk.Label(
+            opt_frame, text="Nessuna ottimizzazione eseguita",
+            bg=Style.BG_PANEL, fg=Style.TEXT_MUTED,
+            font=Style.FONT_SMALL, justify=tk.LEFT
+        )
+        self.opt_result_label.pack(anchor="w", padx=10, pady=3)
         
         # ── Human Body Integration ─────────────────────────────────────────────
         human_frame = tk.LabelFrame(
@@ -1324,6 +1385,126 @@ class PlateLabTab:
         except Exception as e:
             self.status_label.config(text=f"❌ Errore: {str(e)[:50]}")
             messagebox.showerror("Errore Ottimizzazione", str(e))
+    
+    def _run_zone_optimization(self):
+        """
+        Run zone-based topology optimization using SIMP/RAMP.
+        
+        Uses the new v2.0 system:
+        - body_zones.py: Configurable anatomical zones
+        - coupled_system.py: Plate+body transfer function
+        - iterative_optimizer.py: SIMP/RAMP topology optimization
+        - jax_plate_fem.py: Differentiable FEM (if JAX available)
+        """
+        try:
+            from core.plate_optimizer import zone_optimize_plate
+        except ImportError:
+            messagebox.showerror(
+                "Errore",
+                "Sistema ottimizzazione zone non disponibile.\n"
+                "Assicurati che i moduli zone siano installati:\n"
+                "- body_zones.py\n"
+                "- coupled_system.py\n"
+                "- iterative_optimizer.py"
+            )
+            return
+        
+        # Get parameters
+        try:
+            height = float(self.human_height_var.get())
+            thickness_mm = float(self.thickness_var.get())
+            max_iterations = int(self.opt_iterations_var.get())
+            volume_fraction = float(self.opt_volume_var.get()) / 100.0
+        except:
+            messagebox.showerror("Errore", "Parametri non validi")
+            return
+        
+        zone_preset = self.zone_preset_var.get()
+        material = self.material_var.get()
+        
+        # Update status
+        self.status_label.config(text=f"⚡ Ottimizzazione {zone_preset}...")
+        self.opt_result_label.config(text="Calcolo in corso...", fg=Style.WARNING)
+        self.frame.update()
+        
+        # Run in thread to avoid blocking UI
+        def optimize_thread():
+            try:
+                result = zone_optimize_plate(
+                    zone_preset=zone_preset,
+                    height_m=height,
+                    material=material,
+                    thickness_mm=thickness_mm,
+                    volume_fraction=volume_fraction,
+                    max_iterations=max_iterations,
+                    verbose=False
+                )
+                
+                # Update UI in main thread
+                self.frame.after(0, lambda: self._show_optimization_result(result))
+                
+            except Exception as e:
+                self.frame.after(0, lambda: self._show_optimization_error(str(e)))
+        
+        thread = threading.Thread(target=optimize_thread, daemon=True)
+        thread.start()
+    
+    def _show_optimization_result(self, result: Dict):
+        """Display optimization results."""
+        coupling = result.get('coupling_score', 0)
+        converged = result.get('converged', False)
+        iterations = result.get('iterations', 0)
+        frequencies = result.get('frequencies', [])
+        
+        # Update result label
+        status_emoji = "✅" if converged else "⚠️"
+        result_text = (
+            f"{status_emoji} Converged: {converged}\n"
+            f"Iterazioni: {iterations}\n"
+            f"Coupling: {coupling:.1%}\n"
+            f"Freq: {frequencies[0]:.1f}-{frequencies[-1]:.1f} Hz"
+        )
+        self.opt_result_label.config(
+            text=result_text,
+            fg=Style.SUCCESS if converged else Style.WARNING
+        )
+        
+        self.status_label.config(
+            text=f"⚡ Ottimizzazione completata | Score: {coupling:.1%}"
+        )
+        
+        # Show detailed results
+        zones = result.get('zones', [])
+        zone_names = [z.name for z in zones]
+        
+        msg = (
+            f"{'✅ CONVERGED' if converged else '⚠️ MAX ITERATIONS'}\n\n"
+            f"Zone preset: {self.zone_preset_var.get()}\n"
+            f"Zone attive: {len(zones)}\n"
+            f"  • {', '.join(zone_names[:3])}\n"
+            f"  • ...\n\n"
+            f"Risultati:\n"
+            f"  Coupling score: {coupling:.2%}\n"
+            f"  Iterazioni: {iterations}\n"
+            f"  Frequenze: {len(frequencies)} modi\n"
+            f"  Range: {frequencies[0]:.1f} - {frequencies[-1]:.1f} Hz\n\n"
+            f"Il design ottimizzato è stato salvato.\n"
+            f"Esporta per visualizzazione 3D o produzione."
+        )
+        
+        messagebox.showinfo("Ottimizzazione Completata", msg)
+        
+        # Store result for export
+        self.optimization_result = result
+    
+    def _show_optimization_error(self, error_msg: str):
+        """Display optimization error."""
+        self.opt_result_label.config(
+            text=f"❌ Errore: {error_msg[:60]}",
+            fg=Style.ERROR
+        )
+        self.status_label.config(text="❌ Ottimizzazione fallita")
+        messagebox.showerror("Errore Ottimizzazione", error_msg)
     
     # ──────────────────────────────────────────────────────────────────────────
     # HUMAN BODY INTEGRATION
