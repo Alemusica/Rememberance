@@ -1,1 +1,28 @@
+# Golden Studio - Vibroacoustic System
+# Core dependencies
+
 numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.6.0
+
+# Audio
+sounddevice>=0.4.6
+# pyaudio  # Optional, platform-specific
+
+# GUI
+# tkinter is built-in
+
+# FEM / Modal Analysis
+scikit-fem>=8.0.0
+meshio>=5.0.0
+
+# JAX - Differentiable Computing (for topology optimization)
+jax>=0.4.0
+jaxlib>=0.4.0
+
+# Optional: faster JAX on GPU
+# jax[cuda12_pip]  # For NVIDIA GPU
+# jax[metal]       # For Apple Silicon (experimental)
+
+# Development
+pytest>=7.0.0

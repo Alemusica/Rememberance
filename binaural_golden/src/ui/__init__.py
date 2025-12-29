@@ -28,8 +28,16 @@ from .binaural_tab import BinauralTab
 from .spectral_tab import SpectralTab
 from .molecular_tab import MolecularTab
 from .harmonic_tree_tab import HarmonicTreeTab
+from .plate_lab_tab import PlateLabTab
 from .emdr_tab import EMDRTab
 from .session_builder_tab import SessionBuilderTab
+
+# New refactored modules
+try:
+    from .theme import STYLE, PlateLabStyle, configure_ttk_style
+    from .plate_lab_widgets import ScrollableSidebar, CollapsibleSection
+except ImportError:
+    pass
 
 __all__ = [
     # Theme
@@ -39,12 +47,16 @@ __all__ = [
     'golden_grid', 'phi_dimensions', 'phi_padding',
     'create_rounded_rectangle', 'golden_canvas',
     'GoldenCard', 'GoldenButton',
+    # Plate Lab refactored
+    'STYLE', 'PlateLabStyle', 'configure_ttk_style',
+    'ScrollableSidebar', 'CollapsibleSection',
     # Tabs
     'VibroacousticTab',
     'BinauralTab',
     'SpectralTab',
     'MolecularTab',
     'HarmonicTreeTab',
+    'PlateLabTab',
     'EMDRTab',
     'SessionBuilderTab',
 ]
