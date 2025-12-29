@@ -94,6 +94,14 @@ except ImportError:
     HAS_PLATE_LAB = False
     print("⚠️ ui/plate_lab_tab.py not found")
 
+# Import Plate Designer module (evolutionary optimization)
+try:
+    from ui.plate_designer_tab import PlateDesignerTab
+    HAS_PLATE_DESIGNER = True
+except ImportError:
+    HAS_PLATE_DESIGNER = False
+    print("⚠️ ui/plate_designer_tab.py not found")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUDIO ENGINE - REAL-TIME PARAMETER UPDATES, NO GLITCHES
@@ -3989,6 +3997,10 @@ class GoldenSoundStudio:
         if HAS_PLATE_LAB:
             self.plate_lab_tab = PlateLabTab(self.notebook, self.audio)
         
+        # Plate Designer Tab (evolutionary optimization)
+        if HAS_PLATE_DESIGNER:
+            self.plate_designer_tab = PlateDesignerTab(self.notebook)
+        
         self.notebook.add(self.binaural_tab.frame, text="🎵 Binaural Beats")
         self.notebook.add(self.spectral_tab.frame, text="⚛️ Spectral Sound")
         self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
@@ -4006,6 +4018,10 @@ class GoldenSoundStudio:
         # Add Plate Lab tab if available
         if HAS_PLATE_LAB:
             self.notebook.add(self.plate_lab_tab.frame, text="🔬 Plate Lab")
+        
+        # Add Plate Designer tab if available
+        if HAS_PLATE_DESIGNER:
+            self.notebook.add(self.plate_designer_tab, text="🧬 Plate Designer")
         
         # Status bar
         status_frame = tk.Frame(self.root, bg='#1a1a2e')
