@@ -70,8 +70,9 @@ class EvolutionConfig:
     max_cutouts: int = 4
     
     # Stopping
-    convergence_threshold: float = 0.001
-    patience: int = 10  # Generazioni senza miglioramento
+    convergence_threshold: float = 0.0001  # More strict: 0.01% improvement
+    patience: int = 20  # Generations without improvement before checking
+    min_generations_before_stop: int = 30  # Minimum generations before allowing early stop
 
 
 @dataclass
@@ -456,11 +457,19 @@ class EvolutionaryOptimizer:
     
     def _check_convergence(self) -> bool:
         """Verifica convergenza."""
+        # Don't allow early stop before minimum generations
+        if self._generation < self.config.min_generations_before_stop:
+            return False
+        
         if len(self._fitness_history) < self.config.patience:
             return False
         
         recent = self._fitness_history[-self.config.patience:]
         improvement = max(recent) - min(recent)
+        
+        # Also require high absolute fitness before allowing convergence
+        if self._best_fitness and self._best_fitness.total_fitness < 0.85:
+            return False
         
         return improvement < self.config.convergence_threshold
 
