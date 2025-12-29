@@ -44,24 +44,17 @@ except ImportError:
         "steel": None,
     }
 
-# Sacred geometry & body proportions (refactored modules)
-try:
-    from core.sacred_geometry import (
-        PHI, WATER_GEOMETRY, ANTAHKARANA,
-        WaterMoleculeGeometry, AntahkaranaAxis, HumanBodyGolden,
-        generate_butterfly_shape, generate_golden_ovoid
-    )
-    HAS_SACRED_GEOMETRY = True
-except ImportError:
-    HAS_SACRED_GEOMETRY = False
+# Sacred geometry & body proportions (SINGLE SOURCE)
+from core.sacred_geometry import (
+    PHI, WATER_GEOMETRY, ANTAHKARANA,
+    WaterMoleculeGeometry, AntahkaranaAxis, HumanBodyGolden,
+    generate_butterfly_shape, generate_golden_ovoid
+)
 
-# UI Theme (refactored)
-try:
-    from ui.theme import STYLE, configure_ttk_style
-except ImportError:
-    STYLE = None
+# UI Theme (SINGLE SOURCE)
+from ui.theme import PlateLabStyle
 
-# UI Widgets (refactored)
+# UI Widgets
 try:
     from ui.plate_lab_widgets import ScrollableSidebar
     HAS_SCROLLABLE_SIDEBAR = True
@@ -70,30 +63,24 @@ except ImportError:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STYLE CONSTANTS (improved contrast)
+# STYLE ADAPTER (maps PlateLabStyle to legacy Style interface)
 # ══════════════════════════════════════════════════════════════════════════════
 
+_STYLE = PlateLabStyle()
+
 class Style:
-    # Backgrounds (darker for better contrast)
-    BG_DARK = "#1a1a2e"
-    BG_PANEL = "#252544"
-    BG_LIGHT = "#2d2d52"
-    
-    # Accents (brighter gold)
-    ACCENT_GOLD = "#ffd700"
-    ACCENT_BLUE = "#4a90d9"
-    
-    # Text (higher contrast)
-    TEXT_LIGHT = "#ffffff"      # Pure white for max contrast
-    TEXT_MUTED = "#b0b0c8"      # Brighter muted
-    TEXT_DARK = "#1a1a2e"       # For light backgrounds
-    
-    # Status colors
-    SUCCESS = "#4caf50"
-    WARNING = "#ff9800"
-    ERROR = "#f44336"
-    
-    # Fonts (LARGER for better readability on HiDPI)
+    """Adapter for backward compatibility with existing code."""
+    BG_DARK = _STYLE.BG_DARK
+    BG_PANEL = _STYLE.BG_MEDIUM
+    BG_LIGHT = _STYLE.BG_LIGHT
+    ACCENT_GOLD = _STYLE.GOLD
+    ACCENT_BLUE = _STYLE.INFO
+    TEXT_LIGHT = _STYLE.TEXT_PRIMARY
+    TEXT_MUTED = _STYLE.TEXT_SECONDARY
+    TEXT_DARK = _STYLE.TEXT_DARK
+    SUCCESS = _STYLE.SUCCESS
+    WARNING = _STYLE.WARNING
+    ERROR = _STYLE.ERROR
     FONT_LABEL = ("SF Pro Display", 13)
     FONT_HEADER = ("SF Pro Display", 15, "bold")
     FONT_MONO = ("SF Mono", 12)
@@ -101,387 +88,12 @@ class Style:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DATA CLASSES
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Golden ratio (also available from core.sacred_geometry if imported)
-PHI = (1 + np.sqrt(5)) / 2  # Golden ratio ≈ 1.618034
-
-# ══════════════════════════════════════════════════════════════════════════════
-# WATER MOLECULE GEOMETRY (H₂O)
+# CANVAS EXCITER (GUI-specific, distinct from core.exciter.Exciter)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class WaterMoleculeGeometry:
-    """
-    Geometry of water molecule (H₂O) for vibroacoustic plate design.
-    
-    The human body is ~60-70% water, making these proportions deeply resonant.
-    
-    H₂O Properties:
-    - H-O-H angle: 104.5° (tetrahedral-like due to lone pairs)
-    - O-H bond length: 0.9584 Å (angstroms)
-    - H-H distance: 1.5151 Å
-    - Molecular symmetry: C2v (bent)
-    
-    Vibrational modes of water:
-    - ν₁: Symmetric stretch ~3657 cm⁻¹
-    - ν₂: Bending mode ~1595 cm⁻¹  
-    - ν₃: Asymmetric stretch ~3756 cm⁻¹
-    """
-    
-    # Fundamental constants
-    BOND_ANGLE_DEG: float = 104.5  # H-O-H angle in degrees
-    BOND_LENGTH_RATIO: float = 0.9584  # O-H bond normalized
-    
-    # Vibrational frequencies (cm⁻¹) - for reference
-    NU1_SYMMETRIC: float = 3657.0
-    NU2_BENDING: float = 1595.0
-    NU3_ASYMMETRIC: float = 3756.0
-    
-    @property
-    def bond_angle_rad(self) -> float:
-        """Bond angle in radians."""
-        return np.radians(self.BOND_ANGLE_DEG)
-    
-    @property
-    def half_angle_rad(self) -> float:
-        """Half of the bond angle."""
-        return self.bond_angle_rad / 2
-    
-    @property
-    def h_h_distance_ratio(self) -> float:
-        """
-        Distance between H atoms relative to O-H bond.
-        Using law of cosines: H-H = 2 * O-H * sin(θ/2)
-        """
-        return 2 * self.BOND_LENGTH_RATIO * np.sin(self.half_angle_rad)
-    
-    def get_plate_dimensions(self, scale_m: float = 1.0) -> Tuple[float, float]:
-        """
-        Get plate dimensions based on water molecule geometry.
-        
-        Args:
-            scale_m: Scale factor in meters (base dimension)
-        
-        Returns:
-            (length, width) where the plate mimics H₂O geometry
-        """
-        # Length along H-H axis
-        length = scale_m * self.h_h_distance_ratio
-        # Width from O to H-H midpoint
-        width = scale_m * self.BOND_LENGTH_RATIO * np.cos(self.half_angle_rad)
-        return length, width
-    
-    def get_molecule_points(self, center_x: float, center_y: float, 
-                           scale: float = 1.0) -> Dict[str, Tuple[float, float]]:
-        """
-        Get coordinates of H₂O atoms centered at (center_x, center_y).
-        O is at center, H atoms spread according to bond angle.
-        
-        Returns:
-            Dict with 'O', 'H1', 'H2' positions
-        """
-        # Oxygen at center
-        o_pos = (center_x, center_y)
-        
-        # Hydrogen atoms at bond angle
-        h1_angle = np.pi/2 + self.half_angle_rad  # Upper-left
-        h2_angle = np.pi/2 - self.half_angle_rad  # Upper-right
-        
-        bond_len = scale * self.BOND_LENGTH_RATIO
-        
-        h1_pos = (
-            center_x + bond_len * np.cos(h1_angle),
-            center_y - bond_len * np.sin(h1_angle)  # Y inverted for canvas
-        )
-        h2_pos = (
-            center_x + bond_len * np.cos(h2_angle),
-            center_y - bond_len * np.sin(h2_angle)
-        )
-        
-        return {'O': o_pos, 'H1': h1_pos, 'H2': h2_pos}
-    
-    def get_vibrational_ratios(self) -> Dict[str, float]:
-        """
-        Get ratios between vibrational modes.
-        Useful for designing resonant structures.
-        """
-        base = self.NU2_BENDING  # Use bending mode as reference
-        return {
-            'ν₁/ν₂': self.NU1_SYMMETRIC / base,  # ~2.29
-            'ν₃/ν₂': self.NU3_ASYMMETRIC / base,  # ~2.36
-            'ν₃/ν₁': self.NU3_ASYMMETRIC / self.NU1_SYMMETRIC,  # ~1.03
-        }
-
-
-# Water molecule geometry singleton
-WATER_GEOMETRY = WaterMoleculeGeometry()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ANTAHKARANA - The Rainbow Bridge (Sushumna Nadi / Central Channel)
-# ══════════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class AntahkaranaAxis:
-    """
-    Antahkarana (अन्तःकरण) - Sanskrit: "inner instrument" or "internal organ"
-    
-    The Antahkarana represents:
-    1. The bridge between body and spirit
-    2. The connection between lower mind (Manas) and higher mind (Buddhi)
-    3. The pathway to enlightenment (Sushumna Nadi)
-    
-    Four Functions (Yogapedia/Vedanta):
-    - Manas: Lower mind, sensory connection to external world
-    - Buddhi: Intellect, discernment of truth
-    - Chitta: Memory/consciousness, stored impressions
-    - Ahamkara: Ego, the "I-maker"
-    
-    Sushumna Nadi:
-    - Central energy channel running along the spine
-    - When Ida (left) and Pingala (right) are balanced, prana flows
-    - Passes through all 7 chakras from root to crown
-    - Known as "Brahmanadi" - channel of the Absolute
-    
-    Three States of Consciousness:
-    - Jagrat: Waking state
-    - Svapna: Dream state
-    - Susupti: Deep sleep state
-    """
-    
-    # The 7 chakras along Sushumna with their properties
-    # Positions as fraction of spine length (0 = base, 1 = crown)
-    # Frequencies based on harmonic resonance theories
-    CHAKRAS: Dict[str, Dict] = field(default_factory=lambda: {
-        "Muladhara": {       # Root
-            "position": 0.0,
-            "frequency_hz": 256.0,   # C4 - Earth element
-            "color": "#ff0000",      # Red
-            "element": "Earth",
-            "function": "Survival, grounding",
-            "bija_mantra": "LAM",
-        },
-        "Svadhisthana": {    # Sacral
-            "position": 0.15,
-            "frequency_hz": 288.0,   # D4 - Water element
-            "color": "#ff8800",      # Orange
-            "element": "Water",
-            "function": "Creativity, sexuality",
-            "bija_mantra": "VAM",
-        },
-        "Manipura": {        # Solar Plexus
-            "position": 0.35,
-            "frequency_hz": 320.0,   # E4 - Fire element
-            "color": "#ffff00",      # Yellow
-            "element": "Fire",
-            "function": "Will, power",
-            "bija_mantra": "RAM",
-        },
-        "Anahata": {         # Heart - THE GOLDEN CENTER
-            "position": 1 - 1/1.618034,  # ≈ 0.382 - φ point from crown!
-            "frequency_hz": 341.3,   # F4 - Air element
-            "color": "#00ff00",      # Green
-            "element": "Air",
-            "function": "Love, compassion",
-            "bija_mantra": "YAM",
-            "is_golden": True,       # Marks the φ chakra
-        },
-        "Vishuddha": {       # Throat
-            "position": 0.65,
-            "frequency_hz": 384.0,   # G4 - Ether/Space
-            "color": "#00bfff",      # Light Blue
-            "element": "Ether",
-            "function": "Communication, truth",
-            "bija_mantra": "HAM",
-        },
-        "Ajna": {            # Third Eye
-            "position": 0.85,
-            "frequency_hz": 426.7,   # A4 approx - Light
-            "color": "#4400ff",      # Indigo
-            "element": "Light",
-            "function": "Intuition, wisdom",
-            "bija_mantra": "OM",
-        },
-        "Sahasrara": {       # Crown
-            "position": 1.0,
-            "frequency_hz": 480.0,   # B4 approx - Thought/Spirit
-            "color": "#ff00ff",      # Violet/White
-            "element": "Thought",
-            "function": "Connection to divine, enlightenment",
-            "bija_mantra": "Silence",
-        },
-    })
-    
-    # The three main nadis (energy channels)
-    NADIS: Dict[str, Dict] = field(default_factory=lambda: {
-        "Sushumna": {
-            "path": "central",
-            "quality": "Balance, enlightenment",
-            "color": "#ffd700",  # Gold
-        },
-        "Ida": {
-            "path": "left",
-            "quality": "Lunar, feminine, cooling",
-            "color": "#c0c0c0",  # Silver
-        },
-        "Pingala": {
-            "path": "right", 
-            "quality": "Solar, masculine, heating",
-            "color": "#ffa500",  # Orange/Gold
-        },
-    })
-    
-    def get_chakra_positions_on_body(self, body_height: float) -> Dict[str, float]:
-        """
-        Get actual positions of chakras along a body of given height.
-        
-        When lying down, positions are from feet (0) to head (height).
-        The spine runs approximately from sacrum to skull base.
-        
-        Args:
-            body_height: Height in meters
-            
-        Returns:
-            Dict of chakra name -> position in meters from feet
-        """
-        # Spine runs from ~0.05H to ~0.85H when standing
-        spine_start = body_height * 0.05  # Coccyx
-        spine_end = body_height * 0.85    # Skull base
-        spine_length = spine_end - spine_start
-        
-        positions = {}
-        for name, chakra in self.CHAKRAS.items():
-            pos_on_spine = chakra["position"] * spine_length
-            pos_on_body = spine_start + pos_on_spine
-            positions[name] = pos_on_body
-            
-        return positions
-    
-    def get_chakra_frequencies(self) -> List[float]:
-        """Get all chakra frequencies in order from root to crown."""
-        return [c["frequency_hz"] for c in self.CHAKRAS.values()]
-    
-    def get_golden_chakra(self) -> str:
-        """
-        Find the chakra closest to the golden ratio point.
-        The heart chakra (Anahata) is traditionally at the φ point.
-        """
-        golden_pos = 1 / PHI  # ≈ 0.618 from crown, or ~0.382 from base
-        
-        closest = min(
-            self.CHAKRAS.items(),
-            key=lambda x: abs(x[1]["position"] - (1 - golden_pos))
-        )
-        return closest[0]
-    
-    def get_frequency_at_position(self, position: float) -> float:
-        """
-        Interpolate frequency at any position along the Antahkarana.
-        
-        Args:
-            position: 0 = root, 1 = crown
-            
-        Returns:
-            Interpolated frequency in Hz
-        """
-        chakras = list(self.CHAKRAS.values())
-        positions = [c["position"] for c in chakras]
-        frequencies = [c["frequency_hz"] for c in chakras]
-        
-        return np.interp(position, positions, frequencies)
-    
-    def get_resonant_ratios(self) -> Dict[str, float]:
-        """
-        Get harmonic ratios between chakra frequencies.
-        These form a natural harmonic series.
-        """
-        freqs = self.get_chakra_frequencies()
-        base = freqs[0]  # Root as fundamental
-        
-        return {
-            name: chakra["frequency_hz"] / base
-            for name, chakra in self.CHAKRAS.items()
-        }
-
-
-# Antahkarana singleton
-ANTAHKARANA = AntahkaranaAxis()
-
-
-@dataclass
-class HumanBodyGolden:
-    """
-    Golden ratio proportions of the human body.
-    Based on Leonardo da Vinci's Vitruvian Man and modern anthropometry.
-    
-    Reference: goldennumber.net/human-body/
-    - Height to navel = φ
-    - Navel to top / floor to navel = φ
-    - Shoulder width = 1/4 height
-    - Arm span = height
-    """
-    height_m: float = 1.75  # Total height in meters
-    weight_kg: float = 70.0  # Weight in kg
-    
-    @property
-    def navel_height(self) -> float:
-        """Distance from floor to navel."""
-        return self.height_m / PHI  # ≈ 1.08m for 1.75m person
-    
-    @property
-    def shoulder_width(self) -> float:
-        """Shoulder width."""
-        return self.height_m / 4  # ≈ 0.44m
-    
-    @property
-    def arm_span(self) -> float:
-        """Arm span (equals height)."""
-        return self.height_m
-    
-    @property
-    def torso_length(self) -> float:
-        """From shoulder to navel."""
-        return self.height_m - self.navel_height - self.height_m / 8  # Head height
-    
-    @property
-    def lying_length(self) -> float:
-        """Length when lying down."""
-        return self.height_m
-    
-    @property
-    def lying_width(self) -> float:
-        """Width when lying (shoulder width)."""
-        return self.shoulder_width
-    
-    @property
-    def mass_distribution(self) -> Dict[str, float]:
-        """
-        Mass distribution percentages for different body parts.
-        When lying on a vibroacoustic plate.
-        """
-        return {
-            "head": 0.08,      # 8% of body mass
-            "torso": 0.50,     # 50% 
-            "arms": 0.10,      # 10% (5% each)
-            "legs": 0.32,      # 32% (16% each)
-        }
-    
-    def get_pressure_at(self, x_norm: float, y_norm: float) -> float:
-        """
-        Get approximate pressure distribution at normalized position.
-        Higher near torso center, lower at extremities.
-        """
-        # Gaussian centered on torso
-        cx, cy = 0.5, 0.4  # Center of mass (slightly higher than geometric center)
-        sigma = 0.3
-        return np.exp(-((x_norm - cx)**2 + (y_norm - cy)**2) / (2 * sigma**2))
-
-
-@dataclass
-class Exciter:
-    """Represents a vibroacoustic exciter."""
+class CanvasExciter:
+    """Canvas-bound exciter for UI dragging. Uses core.exciter.Exciter for specs."""
     x: float = 0.5  # Normalized [0, 1]
     y: float = 0.5
     phase: float = 0.0  # degrees
@@ -520,9 +132,9 @@ class PlateLabTab:
         self.analyzer = PlateAnalyzer() if HAS_FEM else None
         
         # Exciters
-        self.exciters: List[Exciter] = [
-            Exciter(0.25, 0.5, 0, 1.0, "#ff6b6b"),
-            Exciter(0.75, 0.5, 0, 1.0, "#6bff6b"),
+        self.exciters: List[CanvasExciter] = [
+            CanvasExciter(0.25, 0.5, 0, 1.0, "#ff6b6b"),
+            CanvasExciter(0.75, 0.5, 0, 1.0, "#6bff6b"),
         ]
         
         # State
@@ -2010,7 +1622,7 @@ class PlateLabTab:
         x = 0.3 + 0.4 * np.random.random()
         y = 0.3 + 0.4 * np.random.random()
         
-        self.exciters.append(Exciter(x, y, 0, 1.0, color))
+        self.exciters.append(CanvasExciter(x, y, 0, 1.0, color))
         self._update_exciter_list()
         self._update_visualization()
     
