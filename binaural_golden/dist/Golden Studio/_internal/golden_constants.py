@@ -1,0 +1,759 @@
+#!/usr/bin/env python3
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    GOLDEN CONSTANTS - CENTRALIZED MODULE                     ║
+║                                                                              ║
+║   Single source of truth for all sacred constants, ratios, and sequences    ║
+║   used throughout the Golden Sound Studio application.                       ║
+║                                                                              ║
+║   "One module to rule them all - no more duplication"                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+import numpy as np
+from typing import List, Callable
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GOLDEN RATIO CONSTANTS (Maximum Precision)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Golden Ratio φ = (1 + √5) / 2
+PHI: float = (1 + np.sqrt(5)) / 2  # 1.618033988749895
+
+# Golden Ratio Conjugate = φ - 1 = 1/φ
+PHI_CONJUGATE: float = PHI - 1  # 0.618033988749895
+
+# √5 for golden calculations
+SQRT_5: float = np.sqrt(5)  # 2.2360679774997896
+
+# Golden Angle = 360° / φ² (phyllotaxis in nature)
+GOLDEN_ANGLE_DEG: float = 360.0 / (PHI * PHI)  # 137.5077640500378546°
+GOLDEN_ANGLE_RAD: float = np.radians(GOLDEN_ANGLE_DEG)
+
+# Golden-Fifth Gap Angle: the phase difference between φ and the Perfect Fifth (3/2)
+# Formula: (φ - 1.5) / φ × 360° = 26.2593...°
+# This represents the "missing" angle between musical perfection (1.5) and golden perfection (φ)
+GOLDEN_FIFTH_GAP_DEG: float = ((PHI - 1.5) / PHI) * 360.0  # 26.2593...°
+GOLDEN_FIFTH_GAP_RAD: float = np.radians(GOLDEN_FIFTH_GAP_DEG)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUDIO CONSTANTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Standard sample rate (CD quality)
+SAMPLE_RATE: int = 44100
+
+# High precision sample rate (golden relationship)
+SAMPLE_RATE_HI: int = 96000
+
+# Sacred base frequency (Verdi tuning)
+SACRED_FREQUENCY: float = 432.0
+
+# Audio frequency ranges
+AUDIO_FREQ_MIN: float = 50.0     # Lowest audible
+AUDIO_FREQ_MAX: float = 4000.0   # Highest comfortable
+
+# Brainwave frequency ranges
+DELTA_RANGE = (0.5, 4.0)    # Deep sleep
+THETA_RANGE = (4.0, 8.0)    # Meditation, creativity
+ALPHA_RANGE = (8.0, 14.0)   # Relaxed focus
+BETA_RANGE = (14.0, 30.0)   # Active thinking
+GAMMA_RANGE = (30.0, 100.0) # High cognition
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SACRED ANGLES (Degrees)
+# ══════════════════════════════════════════════════════════════════════════════
+
+SACRED_ANGLES = {
+    # Golden / Fibonacci related
+    "Golden Angle (360°/φ²)": GOLDEN_ANGLE_DEG,
+    "φ-Fifth Gap (φ-1.5)/φ": GOLDEN_FIFTH_GAP_DEG,  # Gap between golden ratio and perfect fifth
+    
+    # Physics constants
+    "Fine Structure (α⁻¹)": 137.035999084,
+    
+    # Biology / DNA
+    "DNA Helix (per base)": 34.3,
+    
+    # Geometry
+    "Pentagon Internal": 108.0,
+    "Pyramid Giza Slope": 51.8392,
+    "Hexagon Internal": 120.0,
+    
+    # Phase relationships
+    "Cancellation (180°)": 180.0,
+    "Quadrature (90°)": 90.0,
+    
+    # Molecular bond angles
+    "Water H-O-H": 104.5,
+    "Methane (tetrahedral)": 109.5,
+    "Ammonia H-N-H": 107.3,
+    "CO2 (linear)": 180.0,
+    "Ozone O-O-O": 116.8,
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHYSICAL CONSTANTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Speed of light (m/s)
+C: float = 299792458.0
+
+# Planck constant (J·s)
+PLANCK: float = 6.62607e-34
+
+# Rydberg constant (m⁻¹)
+RYDBERG: float = 1.097373e7
+
+# Fine structure constant inverse α⁻¹
+FINE_STRUCTURE_INVERSE: float = 137.035999084
+
+# Speed of sound in air (m/s at 20°C)
+SPEED_OF_SOUND_AIR: float = 343.0
+
+# Speed of sound in spruce wood (Abete) - for soundboard
+SPEED_OF_SOUND_SPRUCE_LONGITUDINAL: float = 5500.0  # m/s along grain
+SPEED_OF_SOUND_SPRUCE_TRANSVERSE: float = 1800.0    # m/s across grain
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SOUNDBOARD PHYSICAL CONFIGURATION (Vibroacoustic Therapy)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Physical setup:
+#   - Spruce board (tavola abete Bricocenter): ~2000mm × 600mm × 10mm
+#   - Fiber direction: longitudinal (fibra lungo la tavola)
+#   - Two exciters: HEAD (0mm) and FEET (1900mm) center-to-center
+#   - Listener: lying centered (sdraiato centrale)
+#   - Spring isolation: 5× (4 corners + 1 center), 15-20kg each
+#
+# Hardware:
+#   - Exciters: 2× Visaton EX 60S (25W RMS, 8Ω, neodymium)
+#   - Amplifier: Behringer EPQ304 (4ch Class D, 40W/ch @ 8Ω, stereo mode)
+#
+#         ┌─────────────────────┐
+#         │      [EXCITER       │
+#         │       HEAD]         │  ← lato corto (600mm)
+#         │         ▼           │
+#         │    ┌─────────┐      │
+#         │    │  TESTA  │      │
+#         │    │  CORPO  │      │  1900mm (center-to-center)
+#         │    │  PIEDI  │      │
+#         │    └─────────┘      │
+#         │         ▲           │
+#         │      [EXCITER       │
+#         │       FEET]         │  ← lato corto (600mm)
+#         └─────────────────────┘
+#               (5 molle sotto)
+
+SOUNDBOARD_CONFIG = {
+    # Board dimensions (mm)
+    'board_length_mm': 1900.0,  # Actual center-to-center exciter distance
+    'board_width_mm': 600.0,
+    'board_thickness_mm': 10.0,
+    
+    # Sound velocity (spruce, fiber longitudinal)
+    'velocity_ms': SPEED_OF_SOUND_SPRUCE_LONGITUDINAL,
+    
+    # Exciter positions (mm from head edge, center-to-center)
+    'exciter_head_mm': 0.0,
+    'exciter_feet_mm': 1900.0,
+    
+    # Listener position
+    'ears_from_head_mm': 150.0,
+    'listener_center_mm': 950.0,
+    
+    # Spring isolation
+    'num_springs': 5,
+    'spring_load_kg': 17.5,  # Average 15-20 kg
+    
+    # Acoustic properties
+    'attenuation_alpha': 0.4,  # Soft (resonant board on springs)
+    
+    # ───────────────────────────────────────────────────────────────
+    # EXCITER: Visaton EX 60S (body-shaker transducer)
+    # Source: Official Visaton datasheet (SPL/Impedance graph)
+    # ───────────────────────────────────────────────────────────────
+    'exciter_model': 'Visaton EX 60S',
+    'exciter_power_w': 25.0,          # Watts RMS
+    'exciter_impedance_ohm': 8.0,     # Ohms nominal (8-25Ω range)
+    'exciter_resonance_hz': 65.0,     # Hz (Fs from impedance peak)
+    'exciter_freq_min_hz': 50.0,      # Hz (-3dB, usable range)
+    'exciter_freq_max_hz': 20000.0,   # Hz
+    'exciter_spl_peak_hz': 300.0,     # Hz (max efficiency ~80dB)
+    'exciter_magnet': 'Neodymium',
+    
+    # ───────────────────────────────────────────────────────────────
+    # AMPLIFIER: Behringer EPQ304 (4-channel Class D, stereo mode)
+    # ───────────────────────────────────────────────────────────────
+    'amp_model': 'Behringer EPQ304 (stereo)',
+    'amp_channels': 4,
+    'amp_class': 'D',
+    'amp_power_8ohm_w': 40.0,         # Watts RMS per channel @ 8Ω
+    'amp_power_4ohm_w': 65.0,         # Watts RMS per channel @ 4Ω
+    'amp_power_bridged_8ohm_w': 130.0,# Watts RMS bridged @ 8Ω
+    'amp_form_factor': '1U rackmount',
+    
+    # ───────────────────────────────────────────────────────────────
+    # DERIVED VALUES
+    # ───────────────────────────────────────────────────────────────
+    'max_delay_ms': 1.90 / SPEED_OF_SOUND_SPRUCE_LONGITUDINAL * 1000,  # ~0.345ms
+    'max_delay_samples_48k': int(1.90 / SPEED_OF_SOUND_SPRUCE_LONGITUDINAL * 48000),  # ~17
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SEQUENCES
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fibonacci_sequence(n: int) -> List[int]:
+    """
+    Generate Fibonacci sequence of length n.
+    Ratio of consecutive terms converges to φ.
+    """
+    if n <= 0:
+        return []
+    if n == 1:
+        return [1]
+    
+    fib = [1, 1]
+    while len(fib) < n:
+        fib.append(fib[-1] + fib[-2])
+    return fib
+
+
+def fibonacci_harmonic_ratios(n: int = 6) -> List[int]:
+    """
+    Return first n Fibonacci numbers > 1 for harmonic ratios.
+    [2, 3, 5, 8, 13, 21, ...]
+    """
+    fib = fibonacci_sequence(n + 2)
+    return fib[2:]  # Skip first two 1s
+
+
+# Pre-computed Fibonacci sequence (first 30 terms)
+FIBONACCI: List[int] = fibonacci_sequence(30)
+
+# First 20 prime numbers
+PRIMES: List[int] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 
+                     31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GOLDEN WAVE FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def golden_spiral_interpolation(t: float) -> float:
+    """
+    Golden spiral easing function.
+    Maps [0,1] → [0,1] following divine golden curve (NOT linear!)
+    
+    Used for smooth transitions that follow natural growth patterns.
+    """
+    if t <= 0.0:
+        return 0.0
+    if t >= 1.0:
+        return 1.0
+    
+    # Golden spiral easing
+    theta = t * np.pi * PHI
+    golden_ease = (1.0 - np.cos(theta * PHI_CONJUGATE)) / 2.0
+    
+    # Golden sigmoid for additional smoothing
+    x = (t - 0.5) * 4.0
+    golden_sigmoid = 1.0 / (1.0 + np.exp(-x * PHI))
+    
+    # Blend with golden weights
+    result = golden_ease * PHI_CONJUGATE + golden_sigmoid * (1.0 - PHI_CONJUGATE)
+    
+    return np.clip(result, 0.0, 1.0)
+
+
+def golden_transition(start: float, end: float, t: float) -> float:
+    """
+    Transition between two values using golden spiral interpolation.
+    """
+    golden_t = golden_spiral_interpolation(t)
+    return start + (end - start) * golden_t
+
+
+def golden_ease(t: float) -> float:
+    """
+    Simple golden easing curve for attack/decay envelopes.
+    """
+    theta = t * np.pi * PHI
+    return (1.0 - np.cos(theta * PHI_CONJUGATE)) / 2.0
+
+
+def apply_golden_envelope(signal: np.ndarray, 
+                          attack_ratio: float = None,
+                          release_ratio: float = None) -> np.ndarray:
+    """
+    Apply amplitude envelope using golden ratio proportions.
+    
+    Args:
+        signal: Input audio signal
+        attack_ratio: Attack time as fraction of length (default: φ⁻² × 0.2)
+        release_ratio: Release time as fraction of length (default: φ⁻¹ × 0.3)
+    
+    Returns:
+        Signal with golden envelope applied
+    """
+    length = len(signal)
+    
+    if attack_ratio is None:
+        attack_ratio = PHI_CONJUGATE * PHI_CONJUGATE * 0.2
+    if release_ratio is None:
+        release_ratio = PHI_CONJUGATE * 0.3
+    
+    attack_len = int(length * attack_ratio)
+    release_len = int(length * release_ratio)
+    
+    envelope = np.ones(length)
+    
+    # Attack phase with golden easing
+    for i in range(min(attack_len, length)):
+        t = i / attack_len
+        envelope[i] = golden_ease(t)
+    
+    # Release phase with golden easing
+    for i in range(min(release_len, length)):
+        t = i / release_len
+        envelope[length - 1 - i] = golden_ease(t)
+    
+    return signal * envelope
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GOLDEN WAVE GENERATOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+def golden_wave_sample(phase: float, reversed: bool = True) -> float:
+    """
+    Generate single golden wave sample.
+    
+    A waveform based on φ where:
+    - Rise time = φ⁻¹ (0.618...) of period
+    - Fall time = φ⁻² (0.382...) of period
+    
+    This creates a naturally pleasing asymmetric waveform.
+    """
+    theta = phase % (2 * np.pi)
+    if reversed:
+        theta = 2 * np.pi - theta
+    
+    t = theta / (2 * np.pi)
+    rise = PHI_CONJUGATE
+    
+    if t < rise:
+        return np.sin(np.pi * t / rise / 2)
+    else:
+        return np.cos(np.pi * (t - rise) / (1 - rise) / 2)
+
+
+def golden_wave(phase: np.ndarray, reversed: bool = True) -> np.ndarray:
+    """
+    Vectorized golden wave generator.
+    
+    Args:
+        phase: Array of phase values (radians)
+        reversed: If True, use reversed golden wave
+    
+    Returns:
+        Array of waveform samples
+    """
+    theta = phase % (2 * np.pi)
+    if reversed:
+        theta = 2 * np.pi - theta
+    
+    t = theta / (2 * np.pi)
+    rise = PHI_CONJUGATE
+    
+    wave = np.zeros_like(t)
+    rising = t < rise
+    wave = np.where(rising, np.sin(np.pi * t / rise / 2), 0)
+    wave = np.where(~rising, np.cos(np.pi * (t - rise) / (1 - rise) / 2), wave)
+    
+    return wave
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE GENERATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_golden_phases(n: int) -> np.ndarray:
+    """
+    Generate n phase values using golden angle distribution.
+    Each phase is offset by golden angle from the previous.
+    This is the pattern found in sunflower seeds, pinecones, etc.
+    """
+    return np.array([(i * GOLDEN_ANGLE_RAD) % (2 * np.pi) for i in range(n)])
+
+
+def generate_fibonacci_phases(n: int) -> np.ndarray:
+    """
+    Generate phases from Fibonacci sequence normalized to [0, 2π].
+    """
+    fib = fibonacci_sequence(max(n, 2))[:n]
+    fib_max = max(fib)
+    return np.array([2 * np.pi * f / fib_max for f in fib])
+
+
+def generate_coherent_phases(n: int) -> np.ndarray:
+    """
+    Generate coherent (all zero) phases.
+    """
+    return np.zeros(n)
+
+
+def generate_incoherent_phases(n: int) -> np.ndarray:
+    """
+    Generate random (quantum-realistic) phases.
+    """
+    return np.random.uniform(0, 2 * np.pi, n)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HARMONIC GENERATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fibonacci_harmonics(fundamental: float, n: int = 5) -> List[float]:
+    """
+    Generate harmonics at Fibonacci ratios of fundamental.
+    
+    Args:
+        fundamental: Base frequency in Hz
+        n: Number of harmonics (default 5: 2f, 3f, 5f, 8f, 13f)
+    
+    Returns:
+        List of harmonic frequencies
+    """
+    ratios = fibonacci_harmonic_ratios(n)
+    return [fundamental * r for r in ratios]
+
+
+def phi_amplitude_decay(n: int) -> np.ndarray:
+    """
+    Generate amplitude values that decay by φ⁻¹ for each harmonic.
+    
+    harmonic 1: 1.0
+    harmonic 2: φ⁻¹ ≈ 0.618
+    harmonic 3: φ⁻² ≈ 0.382
+    ...
+    """
+    return np.array([PHI_CONJUGATE ** i for i in range(n)])
+
+
+def inverse_k_amplitude(n: int) -> np.ndarray:
+    """
+    Classic 1/k amplitude rolloff for harmonics.
+    """
+    return np.array([1.0 / (i + 1) for i in range(n)])
+
+
+def inverse_sqrt_amplitude(n: int) -> np.ndarray:
+    """
+    1/√k amplitude rolloff (gentler than 1/k).
+    """
+    return np.array([1.0 / np.sqrt(i + 1) for i in range(n)])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UTILITY FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def deg_to_rad(degrees: float) -> float:
+    """Convert degrees to radians."""
+    return degrees * np.pi / 180.0
+
+
+def rad_to_deg(radians: float) -> float:
+    """Convert radians to degrees."""
+    return radians * 180.0 / np.pi
+
+
+def normalize_audio(signal: np.ndarray, target_peak: float = 0.95) -> np.ndarray:
+    """
+    Normalize audio signal to target peak level.
+    """
+    max_val = np.max(np.abs(signal))
+    if max_val > 0:
+        return signal * (target_peak / max_val)
+    return signal
+
+
+def stereo_pan(pan: float) -> tuple:
+    """
+    Calculate left/right gains from pan position.
+    
+    Args:
+        pan: -1.0 (full left) to 1.0 (full right), 0.0 = center
+    
+    Returns:
+        (left_gain, right_gain) using equal power panning
+    """
+    # Convert [-1, 1] to [0, 1]
+    pan_normalized = (pan + 1.0) / 2.0
+    # Equal power panning
+    left_gain = np.cos(pan_normalized * np.pi / 2)
+    right_gain = np.sin(pan_normalized * np.pi / 2)
+    return left_gain, right_gain
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SOUND → LIGHT SPECTRUM MAPPING (Synesthesia / Cymatics)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Scientific basis:
+# - Both sound and light are waves with frequency/wavelength
+# - Visible light: 380nm (violet) to 700nm (red) = 430-790 THz
+# - Audible sound: 20 Hz to 20,000 Hz
+# 
+# Mapping method:
+# - Map sound octaves to visible spectrum octaves
+# - Use 40 octaves difference (2^40 ≈ 10^12, sound Hz → light THz)
+# - Color corresponds to the harmonic relationship
+#
+# HEACC (color psychology for relaxation):
+# - Blue-green spectrum: calming, reduces anxiety
+# - Warm colors: grounding, comfort
+# - Golden ratios in color mixing enhance harmonic perception
+
+# Visible light frequency range (THz)
+LIGHT_FREQ_MIN_THZ: float = 430.0   # Red
+LIGHT_FREQ_MAX_THZ: float = 790.0   # Violet
+
+# Sound frequency anchor point (A4 = 440 Hz maps to Green ~540 THz)
+SOUND_LIGHT_ANCHOR_HZ: float = 440.0
+SOUND_LIGHT_ANCHOR_THZ: float = 540.0  # Green (restful for eyes)
+
+
+def sound_to_light_frequency(sound_freq_hz: float) -> float:
+    """
+    Map sound frequency to corresponding light frequency using octave scaling.
+    
+    Uses logarithmic mapping: each octave in sound corresponds to 
+    an octave in light spectrum (frequency doubling).
+    
+    Args:
+        sound_freq_hz: Sound frequency in Hz (20-20000 typical)
+    
+    Returns:
+        Light frequency in THz (visible spectrum ~430-790 THz)
+    """
+    # Calculate octave distance from anchor
+    octave_ratio = np.log2(sound_freq_hz / SOUND_LIGHT_ANCHOR_HZ)
+    
+    # Apply same octave ratio to light frequency
+    # Scale factor determines how many sound octaves = one light octave
+    # Using golden ratio for harmonic scaling
+    light_freq = SOUND_LIGHT_ANCHOR_THZ * (2.0 ** (octave_ratio / PHI))
+    
+    # Wrap to visible spectrum (modulo the octave range)
+    light_range = LIGHT_FREQ_MAX_THZ - LIGHT_FREQ_MIN_THZ
+    while light_freq > LIGHT_FREQ_MAX_THZ:
+        light_freq -= light_range * PHI_CONJUGATE
+    while light_freq < LIGHT_FREQ_MIN_THZ:
+        light_freq += light_range * PHI_CONJUGATE
+    
+    return light_freq
+
+
+def light_frequency_to_rgb(freq_thz: float) -> tuple:
+    """
+    Convert light frequency (THz) to RGB color.
+    
+    Based on CIE color matching functions approximation.
+    Returns (R, G, B) each in range 0-255.
+    """
+    # Normalize to 0-1 range within visible spectrum
+    t = (freq_thz - LIGHT_FREQ_MIN_THZ) / (LIGHT_FREQ_MAX_THZ - LIGHT_FREQ_MIN_THZ)
+    t = np.clip(t, 0.0, 1.0)
+    
+    # Approximate visible spectrum color distribution
+    # 0.0 = Red (700nm), 1.0 = Violet (380nm)
+    if t < 0.17:  # Red to Orange
+        r = 1.0
+        g = t / 0.17 * 0.5
+        b = 0.0
+    elif t < 0.33:  # Orange to Yellow
+        r = 1.0
+        g = 0.5 + (t - 0.17) / 0.16 * 0.5
+        b = 0.0
+    elif t < 0.50:  # Yellow to Green
+        r = 1.0 - (t - 0.33) / 0.17
+        g = 1.0
+        b = 0.0
+    elif t < 0.60:  # Green to Cyan
+        r = 0.0
+        g = 1.0
+        b = (t - 0.50) / 0.10
+    elif t < 0.75:  # Cyan to Blue
+        r = 0.0
+        g = 1.0 - (t - 0.60) / 0.15
+        b = 1.0
+    elif t < 0.88:  # Blue to Violet
+        r = (t - 0.75) / 0.13 * 0.5
+        g = 0.0
+        b = 1.0
+    else:  # Violet
+        r = 0.5 + (t - 0.88) / 0.12 * 0.3
+        g = 0.0
+        b = 1.0 - (t - 0.88) / 0.12 * 0.2
+    
+    # Apply gamma correction and intensity adjustment
+    gamma = 0.8
+    intensity = 1.0 - 0.3 * abs(t - 0.5)  # Slightly brighter at center
+    
+    r = int(255 * (r * intensity) ** gamma)
+    g = int(255 * (g * intensity) ** gamma)
+    b = int(255 * (b * intensity) ** gamma)
+    
+    return (r, g, b)
+
+
+def sound_to_light_color(sound_freq_hz: float) -> str:
+    """
+    Map a sound frequency to its corresponding light color (hex string).
+    
+    This creates a synesthetic mapping where:
+    - Lower frequencies → warmer colors (reds, oranges)
+    - Higher frequencies → cooler colors (blues, violets)
+    - Harmonic relationships in sound = harmonic relationships in color
+    
+    Args:
+        sound_freq_hz: Sound frequency in Hz
+    
+    Returns:
+        Hex color string like '#FF8800'
+    """
+    light_freq = sound_to_light_frequency(sound_freq_hz)
+    r, g, b = light_frequency_to_rgb(light_freq)
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+
+def harmonic_color_palette(fundamental_hz: float, num_harmonics: int = 8) -> list:
+    """
+    Generate a color palette for harmonics of a fundamental frequency.
+    
+    Each harmonic gets a color based on its frequency's position
+    in the light spectrum, creating visual harmony.
+    
+    Args:
+        fundamental_hz: Fundamental frequency
+        num_harmonics: Number of harmonics to include
+    
+    Returns:
+        List of hex color strings
+    """
+    colors = [sound_to_light_color(fundamental_hz)]  # Fundamental
+    
+    # Use Fibonacci ratios for harmonics
+    fib_ratios = fibonacci_harmonic_ratios(num_harmonics)
+    for ratio in fib_ratios[:num_harmonics]:
+        freq = fundamental_hz * ratio
+        colors.append(sound_to_light_color(freq))
+    
+    return colors
+
+
+# Solfeggio frequencies and their properties (ancient healing tones)
+SOLFEGGIO_FREQUENCIES = {
+    174: {'name': 'UT', 'color': None, 'property': 'Pain reduction, safety'},
+    285: {'name': 'RE', 'color': None, 'property': 'Tissue healing'},
+    396: {'name': 'MI', 'color': None, 'property': 'Liberating guilt and fear'},
+    417: {'name': 'FA', 'color': None, 'property': 'Facilitating change'},
+    528: {'name': 'SOL', 'color': None, 'property': 'DNA repair, miracles'},
+    639: {'name': 'LA', 'color': None, 'property': 'Relationships, connection'},
+    741: {'name': 'SI', 'color': None, 'property': 'Expression, solutions'},
+    852: {'name': 'TI', 'color': None, 'property': 'Spiritual awakening'},
+    963: {'name': 'DO', 'color': None, 'property': 'Divine consciousness'},
+}
+
+# Initialize Solfeggio colors
+for freq, data in SOLFEGGIO_FREQUENCIES.items():
+    data['color'] = sound_to_light_color(freq)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODULE INFO
+# ══════════════════════════════════════════════════════════════════════════════
+
+__all__ = [
+    # Golden ratio constants
+    'PHI', 'PHI_CONJUGATE', 'SQRT_5', 'GOLDEN_ANGLE_DEG', 'GOLDEN_ANGLE_RAD',
+    
+    # Audio constants
+    'SAMPLE_RATE', 'SAMPLE_RATE_HI', 'SACRED_FREQUENCY',
+    'AUDIO_FREQ_MIN', 'AUDIO_FREQ_MAX',
+    'DELTA_RANGE', 'THETA_RANGE', 'ALPHA_RANGE', 'BETA_RANGE', 'GAMMA_RANGE',
+    
+    # Sacred angles
+    'SACRED_ANGLES',
+    
+    # Physical constants
+    'C', 'PLANCK', 'RYDBERG', 'FINE_STRUCTURE_INVERSE',
+    'SPEED_OF_SOUND_AIR', 'SPEED_OF_SOUND_SPRUCE_LONGITUDINAL', 'SPEED_OF_SOUND_SPRUCE_TRANSVERSE',
+    
+    # Soundboard configuration
+    'SOUNDBOARD_CONFIG',
+    
+    # Sequences
+    'FIBONACCI', 'PRIMES',
+    'fibonacci_sequence', 'fibonacci_harmonic_ratios',
+    
+    # Golden functions
+    'golden_spiral_interpolation', 'golden_transition', 'golden_ease',
+    'apply_golden_envelope', 'golden_wave_sample', 'golden_wave',
+    
+    # Phase generation
+    'generate_golden_phases', 'generate_fibonacci_phases',
+    'generate_coherent_phases', 'generate_incoherent_phases',
+    
+    # Harmonic generation
+    'fibonacci_harmonics', 'phi_amplitude_decay',
+    'inverse_k_amplitude', 'inverse_sqrt_amplitude',
+    
+    # Utilities
+    'deg_to_rad', 'rad_to_deg', 'normalize_audio', 'stereo_pan',
+    
+    # Sound → Light mapping
+    'sound_to_light_frequency', 'light_frequency_to_rgb', 'sound_to_light_color',
+    'harmonic_color_palette', 'SOLFEGGIO_FREQUENCIES',
+]
+
+
+if __name__ == "__main__":
+    # Print module info
+    print("""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    GOLDEN CONSTANTS MODULE                                   ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  φ (Golden Ratio)     = {phi:.15f}                      ║
+║  φ⁻¹ (Conjugate)      = {phi_conj:.15f}                      ║
+║  Golden Angle         = {angle:.10f}°                           ║
+║  Sample Rate          = {sr} Hz                                      ║
+║  Sacred Frequency     = {sacred} Hz                                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+    """.format(
+        phi=PHI,
+        phi_conj=PHI_CONJUGATE,
+        angle=GOLDEN_ANGLE_DEG,
+        sr=SAMPLE_RATE,
+        sacred=SACRED_FREQUENCY
+    ))
+    
+    print("Fibonacci sequence (first 10):", FIBONACCI[:10])
+    print("Fibonacci harmonic ratios:", fibonacci_harmonic_ratios(6))
+    print("Golden phases (5):", [f"{p:.3f}" for p in generate_golden_phases(5)])
+    print("φ amplitude decay (5):", [f"{a:.3f}" for a in phi_amplitude_decay(5)])
+    
+    # Test sound-to-color mapping
+    print("\nSound → Light Spectrum Mapping:")
+    test_freqs = [256, 432, 528, 639, 741, 852, 963]
+    for freq in test_freqs:
+        color = sound_to_light_color(freq)
+        print(f"  {freq}Hz → {color}")
