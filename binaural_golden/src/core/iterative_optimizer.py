@@ -186,10 +186,14 @@ class OptimizationConfig:
     # Volume constraint
     volume_fraction: float = 0.5  # Target material usage
     
+    # DENSITY LIMITS - Evita buchi!
+    min_density: float = 0.3  # Minimo 30% - niente buchi
+    max_density: float = 1.0  # Massimo 100%
+    
     # Optimization parameters
     max_iterations: int = 100
     convergence_tol: float = 1e-4
-    move_limit: float = 0.2  # Max density change per iteration
+    move_limit: float = 0.15  # Max density change per iteration (ridotto)
     
     # Learning rate for gradient descent
     learning_rate: float = 0.5
@@ -478,6 +482,10 @@ class OC_Optimizer(Optimizer):
         lambda_low = 1e-10
         lambda_high = 1e10
         
+        # Get density limits from config
+        rho_min = getattr(config, 'min_density', 0.3)
+        rho_max = getattr(config, 'max_density', 1.0)
+        
         for _ in range(50):  # Bisection iterations
             lambda_mid = 0.5 * (lambda_low + lambda_high)
             
@@ -490,7 +498,10 @@ class OC_Optimizer(Optimizer):
             # Apply move limits
             x_new = np.minimum(x_new, x + config.move_limit)
             x_new = np.maximum(x_new, x - config.move_limit)
-            x_new = np.clip(x_new, 0.0, 1.0)
+            
+            # VINCOLO CRITICO: clip tra min_density e max_density
+            # Questo evita buchi (density=0) nella tavola!
+            x_new = np.clip(x_new, rho_min, rho_max)
             
             # Check volume
             vol_new = np.mean(x_new)

@@ -1500,10 +1500,11 @@ class PlateLabTab:
         self._show_density_visualization(result)
     
     def _show_density_visualization(self, result: Dict):
-        """Show the optimized density field in a matplotlib window."""
+        """Show the optimized density field in a matplotlib window with human overlay."""
         try:
             import matplotlib.pyplot as plt
             from matplotlib.colors import LinearSegmentedColormap
+            from matplotlib.patches import Ellipse, FancyBboxPatch
         except ImportError:
             return  # Skip if matplotlib not available
         
@@ -1511,30 +1512,70 @@ class PlateLabTab:
         if density is None:
             return
         
+        # Get plate dimensions from result or defaults
+        plate_physics = result.get('plate_physics')
+        if plate_physics:
+            plate_length = plate_physics.length
+            plate_width = plate_physics.width
+        else:
+            plate_length = 2.0
+            plate_width = 0.6
+        
         # Create custom golden colormap
         colors = ['#1a1a2e', '#3d3d6b', '#ffd700', '#ffffff']
         cmap = LinearSegmentedColormap.from_list('golden', colors, N=256)
         
         # Create figure
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        fig, axes = plt.subplots(1, 2, figsize=(14, 7))
         fig.suptitle('🎯 Design Tavola Ottimizzato - Zone Corporee', fontsize=14, fontweight='bold')
         
-        # Left: Density field
+        # Left: Density field with human overlay
         ax1 = axes[0]
         im1 = ax1.imshow(density.T, cmap=cmap, origin='lower', aspect='auto',
-                         extent=[0, 2.0, 0, 0.6])  # Assume 2m x 0.6m
-        ax1.set_xlabel('Lunghezza (m)', fontsize=11)
+                         extent=[0, plate_length, 0, plate_width])
+        ax1.set_xlabel('Lunghezza (m) ← PIEDI | TESTA →', fontsize=11)
         ax1.set_ylabel('Larghezza (m)', fontsize=11)
-        ax1.set_title('Distribuzione Densità Materiale', fontsize=12)
-        cbar1 = plt.colorbar(im1, ax=ax1)
-        cbar1.set_label('Densità (0=vuoto, 1=pieno)', fontsize=10)
+        ax1.set_title('Distribuzione Densità + Posizione Corpo', fontsize=12)
         
-        # Add zone markers
+        # Draw human silhouette (schematic)
+        human_height = float(self.human_height_var.get()) if hasattr(self, 'human_height_var') else 1.75
+        scale = plate_length / (human_height + 0.1)  # Human fills most of plate
+        
+        # Body parts positions (normalized 0-1 along length)
+        body_parts = {
+            'head': (0.92, 0.08),       # position, size
+            'shoulders': (0.82, 0.18),
+            'torso': (0.60, 0.30),
+            'hips': (0.40, 0.15),
+            'legs': (0.18, 0.35),
+            'feet': (0.03, 0.06),
+        }
+        
+        center_y = plate_width / 2
+        for part, (pos, size) in body_parts.items():
+            x = pos * plate_length
+            w = size * plate_length * 0.3
+            h = plate_width * 0.4
+            ellipse = Ellipse((x, center_y), w, h, 
+                            fill=False, edgecolor='#00ff00', 
+                            linewidth=1.5, linestyle='--', alpha=0.7)
+            ax1.add_patch(ellipse)
+        
+        # Add zone markers with labels
         zones = result.get('zones', [])
-        frequencies = result.get('frequencies', [])
+        for i, zone in enumerate(zones[:7]):  # Max 7 zones shown
+            pos = zone.position if hasattr(zone, 'position') else (i + 1) / 8
+            x = pos * plate_length
+            ax1.axvline(x=x, color='#ff6b6b', linestyle=':', alpha=0.5, linewidth=1)
+            ax1.text(x, plate_width * 1.02, f'{zone.f_center:.0f}Hz', 
+                    fontsize=8, ha='center', color='#ff6b6b', rotation=45)
+        
+        cbar1 = plt.colorbar(im1, ax=ax1)
+        cbar1.set_label('Densità materiale (0=vuoto, 1=pieno)', fontsize=10)
         
         # Right: Frequency response
         ax2 = axes[1]
+        frequencies = result.get('frequencies', [])
         target_freqs = [z.f_center for z in zones] if zones else []
         
         if frequencies is not None and len(frequencies) > 0:
@@ -1542,23 +1583,30 @@ class PlateLabTab:
             bars = ax2.bar(x, frequencies, color='#ffd700', alpha=0.8, label='Modi calcolati')
             
             # Mark target frequencies
-            if target_freqs:
-                for i, tf in enumerate(target_freqs[:len(frequencies)]):
-                    ax2.axhline(y=tf, color='#ff6b6b', linestyle='--', alpha=0.5)
+            for i, tf in enumerate(target_freqs):
+                ax2.axhline(y=tf, color='#ff6b6b', linestyle='--', alpha=0.5, linewidth=1)
+                ax2.text(len(frequencies) + 0.2, tf, f'{tf:.0f} Hz', 
+                        fontsize=9, va='center', color='#ff6b6b')
             
             ax2.set_xlabel('Indice Modo', fontsize=11)
             ax2.set_ylabel('Frequenza (Hz)', fontsize=11)
             ax2.set_title('Frequenze Modali vs Target Zone', fontsize=12)
-            ax2.legend()
+            ax2.legend(loc='upper left')
+            ax2.set_xlim(-0.5, len(frequencies) + 1)
         
         # Coupling score annotation
         coupling = result.get('coupling_score', 0)
-        fig.text(0.5, 0.02, f'Coupling Score: {coupling:.1%}', ha='center', fontsize=12, 
-                 fontweight='bold', color='#ffd700',
-                 bbox=dict(boxstyle='round', facecolor='#1a1a2e', edgecolor='#ffd700'))
+        converged = result.get('converged', False)
+        iterations = result.get('iterations', 0)
+        
+        status = '✅ CONVERGED' if converged else '⚠️ MAX ITER'
+        fig.text(0.5, 0.02, 
+                f'{status} | Coupling: {coupling:.1%} | Iterazioni: {iterations}', 
+                ha='center', fontsize=12, fontweight='bold', color='#ffd700',
+                bbox=dict(boxstyle='round', facecolor='#1a1a2e', edgecolor='#ffd700'))
         
         plt.tight_layout()
-        plt.subplots_adjust(bottom=0.1)
+        plt.subplots_adjust(bottom=0.08)
         plt.show()
     
     def _show_optimization_error(self, error_msg: str):

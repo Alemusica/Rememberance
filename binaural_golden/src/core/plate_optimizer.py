@@ -73,16 +73,22 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class PlateTemplate(Enum):
-    """Available plate shape templates."""
-    RECTANGLE = "rectangle"
-    GOLDEN_RECTANGLE = "golden_rectangle"  # L/W = φ
-    ELLIPSE = "ellipse"
-    GOLDEN_OVOID = "golden_ovoid"  # a/b = φ
-    VITRUVIAN = "vitruvian"  # Human body proportions
-    WATER_MOLECULE = "water_molecule"  # H₂O 104.5°
-    BUTTERFLY = "butterfly"  # Symmetric winged shape
-    LEMNISCATE = "lemniscate"  # Figure-8 / infinity
-    VESICA_PISCIS = "vesica_piscis"  # Sacred geometry
+    """
+    Available plate shape templates.
+    
+    NOTA: Solo forme CONVESSE e REALIZZABILI per produzione!
+    Escluse: lemniscate (figura-8), butterfly (ali), water_molecule (3 lobi)
+    """
+    RECTANGLE = "rectangle"              # Rettangolo standard
+    GOLDEN_RECTANGLE = "golden_rectangle"  # L/W = φ ≈ 1.618
+    ELLIPSE = "ellipse"                  # Ellisse standard
+    GOLDEN_OVOID = "golden_ovoid"        # Ovoide con a/b = φ
+    VITRUVIAN = "vitruvian"              # Proporzioni corpo umano
+    VESICA_PISCIS = "vesica_piscis"      # Geometria sacra (lente)
+    # DEPRECATI - NON USARE:
+    # WATER_MOLECULE = "water_molecule"  # Forma a 3 lobi - non pratica
+    # BUTTERFLY = "butterfly"            # Ali - troppe concavità
+    # LEMNISCATE = "lemniscate"          # Figura-8 - impossibile
 
 
 @dataclass
@@ -166,8 +172,9 @@ class OptimizationConfig:
     
     # Constraints
     thickness_range: Tuple[float, float] = (0.008, 0.025)  # 8mm - 25mm
-    max_cutouts: int = 5
-    min_material_fraction: float = 0.70  # At least 70% solid
+    max_cutouts: int = 0  # ZERO tagli interni per default (producibilità)
+    min_material_fraction: float = 0.85  # Almeno 85% solido (era 70%)
+    enforce_convexity: bool = True  # Forza forme convesse
     
     # Resolution
     mesh_resolution: int = 20
@@ -719,17 +726,31 @@ class PlateOptimizer:
         Run optimization to find best plate shape.
         
         Args:
-            template: Specific template to optimize (None = try all)
+            template: Specific template to optimize (None = try all valid)
             with_cutouts: Include internal cutouts in optimization
             verbose: Print progress
         
         Returns:
             OptimizationResult with best configuration
         """
+        # Template validi (solo forme convesse e realizzabili)
+        VALID_TEMPLATES = [
+            PlateTemplate.RECTANGLE,
+            PlateTemplate.GOLDEN_RECTANGLE,
+            PlateTemplate.ELLIPSE,
+            PlateTemplate.GOLDEN_OVOID,
+            PlateTemplate.VITRUVIAN,
+            PlateTemplate.VESICA_PISCIS,
+        ]
+        
         if template is not None:
             templates = [template]
         else:
-            templates = list(PlateTemplate)
+            templates = VALID_TEMPLATES
+        
+        # Forza with_cutouts=False se config lo richiede
+        if self.config.max_cutouts == 0:
+            with_cutouts = False
         
         best_result = None
         best_score = float('-inf')
@@ -784,17 +805,10 @@ class PlateOptimizer:
             width = length / 4
             vertices = generate_vitruvian_shape(length)
             
-        elif template == PlateTemplate.WATER_MOLECULE:
-            width = length / 2
-            vertices = generate_water_molecule_shape(length)
-            
-        elif template == PlateTemplate.BUTTERFLY:
-            width = length / 2
-            vertices = generate_butterfly_shape(length)
-            
-        elif template == PlateTemplate.LEMNISCATE:
-            width = length / 3
-            vertices = generate_lemniscate_shape(length)
+        # DEPRECATI - redirect a golden_rectangle
+        # elif template == PlateTemplate.WATER_MOLECULE:
+        # elif template == PlateTemplate.BUTTERFLY:
+        # elif template == PlateTemplate.LEMNISCATE:
             
         elif template == PlateTemplate.VESICA_PISCIS:
             width = length / np.sqrt(3)
