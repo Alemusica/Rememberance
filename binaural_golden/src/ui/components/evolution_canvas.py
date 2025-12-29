@@ -446,6 +446,57 @@ class EvolutionCanvas(tk.Canvas):
                 self.create_line(points + points[:2], fill=outline,
                                 width=width, smooth=True)
         
+        elif contour_type == ContourType.SUPERELLIPSE:
+            # Squircle (smooth transition between rectangle and ellipse)
+            points = self._generate_superellipse_points(cx, cy, rx, ry, n_points=60)
+            if fill:
+                self.create_polygon(points, fill=fill, outline=outline,
+                                   width=width, smooth=True)
+            else:
+                self.create_line(points + points[:2], fill=outline,
+                                width=width, smooth=True)
+        
+        elif contour_type == ContourType.ORGANIC:
+            # Organic blob shape (Fourier harmonics)
+            points = self._generate_organic_points(cx, cy, rx, ry, n_points=60)
+            if fill:
+                self.create_polygon(points, fill=fill, outline=outline,
+                                   width=width, smooth=True)
+            else:
+                self.create_line(points + points[:2], fill=outline,
+                                width=width, smooth=True)
+        
+        elif contour_type == ContourType.ERGONOMIC:
+            # Body-conforming shape
+            points = self._generate_ergonomic_points(cx, cy, rx, ry, n_points=60)
+            if fill:
+                self.create_polygon(points, fill=fill, outline=outline,
+                                   width=width, smooth=True)
+            else:
+                self.create_line(points + points[:2], fill=outline,
+                                width=width, smooth=True)
+        
+        elif contour_type == ContourType.FREEFORM:
+            # Freeform spline - use control points if available
+            if self._genome is not None and len(self._genome.control_points) >= 3:
+                points = self._generate_freeform_points(cx, cy, rx, ry, 
+                                                        self._genome.control_points)
+            else:
+                # Fallback to ellipse
+                points = []
+                for i in range(60):
+                    angle = 2 * np.pi * i / 60
+                    px = cx + rx * np.cos(angle)
+                    py = cy + ry * np.sin(angle)
+                    points.extend([px, py])
+            
+            if fill:
+                self.create_polygon(points, fill=fill, outline=outline,
+                                   width=width, smooth=True)
+            else:
+                self.create_line(points + points[:2], fill=outline,
+                                width=width, smooth=True)
+        
         else:
             # Default: rounded rectangle
             self._draw_rounded_rect(x0, y0, x1, y1, radius=10,
@@ -534,6 +585,108 @@ class EvolutionCanvas(tk.Canvas):
             
             x = cx + rx * math.cos(theta) * r_mod
             y = cy + ry * math.sin(theta)
+            points.extend([x, y])
+        return points
+    
+    def _generate_superellipse_points(self, cx: float, cy: float, rx: float, ry: float, 
+                                       n_points: int = 60, exponent: float = 2.5) -> list:
+        """
+        Generate superellipse (squircle) points.
+        Exponent=2 is ellipse, >2 approaches rectangle with rounded corners.
+        """
+        points = []
+        for i in range(n_points):
+            theta = 2 * math.pi * i / n_points
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+            # Superellipse formula: |x/a|^n + |y/b|^n = 1
+            x = cx + rx * (abs(cos_t) ** (2/exponent)) * (1 if cos_t >= 0 else -1)
+            y = cy + ry * (abs(sin_t) ** (2/exponent)) * (1 if sin_t >= 0 else -1)
+            points.extend([x, y])
+        return points
+    
+    def _generate_organic_points(self, cx: float, cy: float, rx: float, ry: float,
+                                  n_points: int = 80, genome=None) -> list:
+        """
+        Generate organic blob shape using Fourier harmonics.
+        Creates smooth, natural-looking contours for ABH optimization.
+        """
+        points = []
+        # Default harmonics if no genome provided
+        harmonics = [(1.0, 0), (0.08, 2), (0.05, 3), (0.03, 5)]
+        if genome and hasattr(genome, 'fourier_coeffs'):
+            harmonics = genome.fourier_coeffs[:4] if genome.fourier_coeffs else harmonics
+        
+        for i in range(n_points):
+            theta = 2 * math.pi * i / n_points
+            # Base radius with Fourier modulation
+            r_mod = 1.0
+            for amp, freq in harmonics:
+                if isinstance(amp, (int, float)) and isinstance(freq, (int, float)):
+                    r_mod += amp * math.cos(freq * theta)
+            
+            x = cx + rx * math.cos(theta) * r_mod
+            y = cy + ry * math.sin(theta) * r_mod
+            points.extend([x, y])
+        return points
+    
+    def _generate_ergonomic_points(self, cx: float, cy: float, rx: float, ry: float,
+                                    n_points: int = 80) -> list:
+        """
+        Generate body-conforming ergonomic shape.
+        Wider at shoulders, narrower at waist, slight curve for lumbar.
+        """
+        points = []
+        for i in range(n_points):
+            theta = 2 * math.pi * i / n_points
+            
+            # Shoulder widening at top (theta near pi/2)
+            shoulder_mod = 1.0 + 0.15 * math.exp(-((theta - math.pi/2)**2) / 0.5)
+            # Waist narrowing at sides (theta near 0 and pi)
+            waist_mod = 1.0 - 0.1 * (math.cos(theta)**4)
+            # Lumbar curve at bottom
+            lumbar_mod = 1.0 + 0.08 * math.exp(-((theta - 3*math.pi/2)**2) / 0.8)
+            
+            r_mod = shoulder_mod * waist_mod * lumbar_mod
+            
+            x = cx + rx * math.cos(theta) * r_mod
+            y = cy + ry * math.sin(theta) * r_mod
+            points.extend([x, y])
+        return points
+    
+    def _generate_freeform_points(self, cx: float, cy: float, rx: float, ry: float,
+                                   control_points: list = None, n_points: int = 80) -> list:
+        """
+        Generate freeform spline shape from control points.
+        Falls back to organic shape if no control points provided.
+        """
+        if not control_points or len(control_points) < 4:
+            # Fallback to organic shape
+            return self._generate_organic_points(cx, cy, rx, ry, n_points)
+        
+        # Simple interpolation through control points
+        points = []
+        n_ctrl = len(control_points)
+        
+        for i in range(n_points):
+            t = i / n_points
+            # Find the two control points to interpolate between
+            idx = int(t * n_ctrl) % n_ctrl
+            idx_next = (idx + 1) % n_ctrl
+            local_t = (t * n_ctrl) % 1.0
+            
+            # Linear interpolation (could use spline for smoother)
+            if isinstance(control_points[idx], (list, tuple)) and len(control_points[idx]) >= 2:
+                px = control_points[idx][0] * (1 - local_t) + control_points[idx_next][0] * local_t
+                py = control_points[idx][1] * (1 - local_t) + control_points[idx_next][1] * local_t
+                x = cx + rx * (px - 0.5) * 2
+                y = cy + ry * (py - 0.5) * 2
+            else:
+                # Fallback to circle point
+                theta = 2 * math.pi * i / n_points
+                x = cx + rx * math.cos(theta)
+                y = cy + ry * math.sin(theta)
+            
             points.extend([x, y])
         return points
     

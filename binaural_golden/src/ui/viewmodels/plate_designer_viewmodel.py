@@ -488,6 +488,9 @@ class PlateDesignerViewModel:
                 self._state.is_running = False
             
         except Exception as e:
+            import traceback
+            error_details = f"{str(e)}\n{traceback.format_exc()}"
+            print(f"[Evolution Error] {error_details}")  # Debug logging
             self._set_error(str(e))
         
         self._update_queue.put(True)

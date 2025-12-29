@@ -70,6 +70,35 @@ class PlateDesignerTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent, style="TFrame")
         
+        # ─── Scrollable Container ───────────────────────────────────────────
+        # Wrap everything in a canvas with scrollbar for small screens
+        self._outer_canvas = tk.Canvas(self, highlightthickness=0)
+        self._scrollbar = ttk.Scrollbar(self, orient="vertical", command=self._outer_canvas.yview)
+        self._scrollable_frame = ttk.Frame(self._outer_canvas, style="TFrame")
+        
+        # Configure scroll region on frame resize
+        self._scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self._outer_canvas.configure(scrollregion=self._outer_canvas.bbox("all"))
+        )
+        
+        self._canvas_window = self._outer_canvas.create_window(
+            (0, 0), window=self._scrollable_frame, anchor="nw"
+        )
+        self._outer_canvas.configure(yscrollcommand=self._scrollbar.set)
+        
+        # Make canvas width follow frame width
+        self.bind("<Configure>", self._on_frame_configure)
+        
+        # Mouse wheel scrolling
+        self._outer_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self._outer_canvas.bind_all("<Button-4>", self._on_mousewheel)  # Linux
+        self._outer_canvas.bind_all("<Button-5>", self._on_mousewheel)  # Linux
+        
+        # Pack scrollbar and canvas
+        self._scrollbar.pack(side="right", fill="y")
+        self._outer_canvas.pack(side="left", fill="both", expand=True)
+        
         # ViewModel
         self._viewmodel = PlateDesignerViewModel()
         self._viewmodel.add_observer(self._on_state_changed)
@@ -93,7 +122,7 @@ class PlateDesignerTab(ttk.Frame):
         """Create all UI widgets."""
         
         # === TOP BAR: Configuration & Controls ===
-        self._top_frame = ttk.Frame(self, style="TFrame")
+        self._top_frame = ttk.Frame(self._scrollable_frame, style="TFrame")
         
         # --- Person Config Card ---
         self._person_frame = self._create_card_frame(self._top_frame, "👤 Person")
@@ -304,7 +333,7 @@ class PlateDesignerTab(ttk.Frame):
         )
         
         # === MAIN CANVAS ===
-        self._canvas_frame = self._create_card_frame(self, "🔬 Plate Evolution")
+        self._canvas_frame = self._create_card_frame(self._scrollable_frame, "🔬 Plate Evolution")
         
         self._evolution_canvas = EvolutionCanvas(
             self._canvas_frame,
@@ -313,7 +342,7 @@ class PlateDesignerTab(ttk.Frame):
         )
         
         # === BOTTOM BAR: Status & Charts ===
-        self._bottom_frame = ttk.Frame(self, style="TFrame")
+        self._bottom_frame = ttk.Frame(self._scrollable_frame, style="TFrame")
         
         # --- Progress Card ---
         self._progress_card = self._create_card_frame(self._bottom_frame, "📈 Progress")
@@ -469,6 +498,21 @@ class PlateDesignerTab(ttk.Frame):
         self._pop_spin.bind('<FocusOut>', self._on_config_changed)
         self._gen_spin.bind('<FocusOut>', self._on_config_changed)
         self._mutation_spin.bind('<FocusOut>', self._on_config_changed)
+    
+    def _on_frame_configure(self, event):
+        """Handle frame resize - adjust canvas width to match."""
+        canvas_width = event.width - self._scrollbar.winfo_width()
+        self._outer_canvas.itemconfig(self._canvas_window, width=canvas_width)
+    
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling."""
+        # Cross-platform scroll handling
+        if event.num == 4:  # Linux scroll up
+            self._outer_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:  # Linux scroll down
+            self._outer_canvas.yview_scroll(1, "units")
+        else:  # Windows/macOS
+            self._outer_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
     
     # ─────────────────────────────────────────────────────────────────────────
     # Event Handlers
@@ -810,6 +854,12 @@ class PlateDesignerTab(ttk.Frame):
     
     def _update_from_state(self, state: PlateDesignerState):
         """Update all UI from state."""
+        
+        # Check for errors
+        if state.error_message:
+            self._status_label.config(text=f"❌ Error: {state.error_message[:50]}...")
+            print(f"[UI Error] {state.error_message}")  # Debug
+            return
         
         # Status
         self._status_label.config(text=state.status_text)
