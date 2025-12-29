@@ -70,6 +70,14 @@ except ImportError:
     HAS_SOUNDBOARD = False
     print("⚠️ soundboard_panning.py not found")
 
+# Import Plate Designer tab (evolutionary optimization)
+try:
+    from ui.plate_designer_tab import PlateDesignerTab
+    HAS_PLATE_DESIGNER = True
+except ImportError as e:
+    HAS_PLATE_DESIGNER = False
+    print(f"⚠️ PlateDesignerTab not available: {e}")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUDIO ENGINE - REAL-TIME PARAMETER UPDATES, NO GLITCHES
@@ -3951,6 +3959,11 @@ class GoldenSoundStudio:
         self.notebook.add(self.molecular_tab.frame, text="🧪 Molecular Sound")
         self.notebook.add(self.harmonic_tree_tab.frame, text="🌳 Harmonic Tree")
         self.notebook.add(self.vibroacoustic_tab.frame, text="🪵 Vibroacoustic")
+        
+        # Plate Designer tab (evolutionary optimization)
+        if HAS_PLATE_DESIGNER:
+            self.plate_designer_tab = PlateDesignerTab(self.notebook)
+            self.notebook.add(self.plate_designer_tab, text="🔬 Plate Designer")
         
         # Status bar
         status_frame = tk.Frame(self.root, bg='#1a1a2e')
