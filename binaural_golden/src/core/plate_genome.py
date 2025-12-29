@@ -31,7 +31,10 @@ class ContourType(Enum):
     ELLIPSE = "ellipse"
     GOLDEN_RECT = "golden_rectangle"
     OVOID = "ovoid"
-    FREEFORM = "freeform"  # Spline libera
+    SUPERELLIPSE = "superellipse"  # Squircle (rounded rectangle smooth)
+    ORGANIC = "organic"            # Blob-like organic shape (Fourier)
+    ERGONOMIC = "ergonomic"        # Body-conforming shape
+    FREEFORM = "freeform"          # Fully evolvable spline
 
 
 # Cutout shapes available for optimization
@@ -523,6 +526,14 @@ class PlateGenome:
             return self._ellipse_points(n_points)
         elif self.contour_type == ContourType.OVOID:
             return self._ovoid_points(n_points)
+        elif self.contour_type == ContourType.SUPERELLIPSE:
+            return self._superellipse_points(n_points)
+        elif self.contour_type == ContourType.ORGANIC:
+            return self._organic_points(n_points)
+        elif self.contour_type == ContourType.ERGONOMIC:
+            return self._ergonomic_points(n_points)
+        elif self.contour_type == ContourType.FREEFORM:
+            return self._freeform_points(n_points)
         else:
             return self._ellipse_points(n_points)
     
@@ -572,6 +583,130 @@ class PlateGenome:
         
         return np.column_stack([x, y])
     
+    def _superellipse_points(self, n: int, exponent: float = 2.5) -> np.ndarray:
+        """
+        Superellipse (squircle) - smooth transition between rectangle and ellipse.
+        
+        |x/a|^n + |y/b|^n = 1
+        - n=2: ellipse
+        - n=4: squircle (rounded rectangle)
+        - n→∞: rectangle
+        
+        Great for CNC milling (smooth curves, no sharp corners).
+        """
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        
+        # Use sign-preserving power for smooth curve
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+        
+        x = 0.5 + 0.48 * np.sign(cos_t) * np.abs(cos_t) ** (2 / exponent)
+        y = 0.5 + 0.48 * np.sign(sin_t) * np.abs(sin_t) ** (2 / exponent)
+        
+        return np.column_stack([x, y])
+    
+    def _organic_points(self, n: int) -> np.ndarray:
+        """
+        Organic blob shape using Fourier harmonics.
+        
+        Creates smooth, natural-looking shapes like:
+        - Guitar bodies
+        - Violin plates
+        - Amoeba-like forms
+        
+        The shape is generated using low-frequency Fourier components
+        to ensure smooth, CNC-friendly curves.
+        """
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        
+        # Base ellipse
+        r = 0.45 * np.ones(n)
+        
+        # Add random Fourier harmonics (only low frequencies for smoothness)
+        np.random.seed(hash(id(self)) % 2**32)  # Reproducible per instance
+        n_harmonics = 4
+        for k in range(2, n_harmonics + 2):
+            amp = 0.08 / k  # Decreasing amplitude for higher harmonics
+            phase = np.random.uniform(0, 2 * np.pi)
+            r += amp * np.cos(k * theta + phase)
+        
+        x = 0.5 + r * np.cos(theta)
+        y = 0.5 + r * np.sin(theta) * 1.3  # Slightly elongated
+        
+        # Normalize to fit in [0,1] x [0,1]
+        x = (x - x.min()) / (x.max() - x.min()) * 0.96 + 0.02
+        y = (y - y.min()) / (y.max() - y.min()) * 0.96 + 0.02
+        
+        return np.column_stack([x, y])
+    
+    def _ergonomic_points(self, n: int) -> np.ndarray:
+        """
+        Body-conforming ergonomic shape for vibroacoustic therapy.
+        
+        Wider at shoulders, narrower at waist, follows human torso outline.
+        Optimized for lying-down position (head at top).
+        """
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        
+        # Human torso-inspired profile
+        # Shoulder region (top): wider
+        # Waist region (middle): narrower  
+        # Hip region (bottom): medium width
+        
+        # Vertical profile modulation
+        y_norm = (np.sin(theta) + 1) / 2  # 0=bottom, 1=top
+        
+        # Width varies with y (anatomical profile)
+        width_profile = 0.35 + 0.15 * np.cos(2 * np.pi * y_norm)  # Narrower at waist
+        width_profile += 0.05 * np.cos(4 * np.pi * y_norm)  # Subtle hip curve
+        
+        x = 0.5 + width_profile * np.cos(theta)
+        y = 0.5 + 0.48 * np.sin(theta)
+        
+        return np.column_stack([x, y])
+    
+    def _freeform_points(self, n: int) -> np.ndarray:
+        """
+        Fully evolvable freeform shape using control points.
+        
+        If control_points already exist (from evolution), interpolate them.
+        Otherwise, start from a slightly perturbed ellipse.
+        
+        Uses cubic spline interpolation for smooth CNC-compatible curves.
+        """
+        if len(self.control_points) >= 4:
+            # Interpolate existing control points with cubic spline
+            from scipy.interpolate import splprep, splev
+            
+            try:
+                # Close the curve
+                cp = np.vstack([self.control_points, self.control_points[0]])
+                
+                # Fit spline
+                tck, u = splprep([cp[:, 0], cp[:, 1]], s=0, per=True, k=3)
+                
+                # Evaluate at n points
+                u_new = np.linspace(0, 1, n)
+                x, y = splev(u_new, tck)
+                
+                return np.column_stack([x, y])
+            except Exception:
+                # Fallback to linear interpolation
+                pass
+        
+        # Generate initial freeform from perturbed ellipse
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        
+        # Start with ellipse + random smooth perturbations
+        r_base = 0.45
+        r_perturbation = 0.05 * np.sin(3 * theta) + 0.03 * np.cos(5 * theta)
+        r = r_base + r_perturbation
+        
+        x = 0.5 + r * np.cos(theta)
+        y = 0.5 + r * np.sin(theta) * 1.2  # Slightly elongated
+        
+        return np.column_stack([x, y])
+    
     # ─────────────────────────────────────────────────────────────────────────
     # Operatori Genetici
     # ─────────────────────────────────────────────────────────────────────────
@@ -618,10 +753,14 @@ class PlateGenome:
         # CONTORNO TAVOLA: può mutare tipo e forma
         # ═══════════════════════════════════════════════════════════════════════
         
-        # 5% chance di cambiare tipo contorno
-        if np.random.random() < 0.05:
-            all_types = [ContourType.RECTANGLE, ContourType.GOLDEN_RECT, 
-                        ContourType.ELLIPSE, ContourType.OVOID, ContourType.FREEFORM]
+        # 10% chance di cambiare tipo contorno (higher to explore shapes)
+        if np.random.random() < 0.10:
+            all_types = [
+                ContourType.RECTANGLE, ContourType.GOLDEN_RECT, 
+                ContourType.ELLIPSE, ContourType.OVOID,
+                ContourType.SUPERELLIPSE, ContourType.ORGANIC,
+                ContourType.ERGONOMIC, ContourType.FREEFORM
+            ]
             new_genome.contour_type = np.random.choice(all_types)
             
             # Se passa a FREEFORM, genera control points iniziali

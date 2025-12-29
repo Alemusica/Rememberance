@@ -222,19 +222,51 @@ class PlateDesignerTab(ttk.Frame):
         )
         self._zone_display.pack(side='left', padx=5)
         
+        # === CONTOUR TYPE SELECTOR ===
+        # Row 5: Plate shape selection
+        self._create_label(self._config_frame, "Contour:").grid(
+            row=5, column=0, padx=5, pady=3, sticky='e')
+        
+        self._contour_var = tk.StringVar(value="ORGANIC")  # Default: organic curves
+        self._contour_options = [
+            "RECTANGLE",      # Fixed rectangle
+            "GOLDEN_RECT",    # Golden ratio rectangle
+            "ELLIPSE",        # Smooth ellipse
+            "OVOID",          # Egg shape (narrower at one end)
+            "SUPERELLIPSE",   # Squircle (rounded rectangle)
+            "ORGANIC",        # Fourier-based blob (guitar-like)
+            "ERGONOMIC",      # Body-conforming shape
+            "FREEFORM",       # Fully evolvable spline
+            "AUTO"            # Let evolution choose
+        ]
+        self._contour_combo = ttk.Combobox(
+            self._config_frame, textvariable=self._contour_var,
+            values=self._contour_options, state="readonly", width=12
+        )
+        self._contour_combo.grid(row=5, column=1, padx=5, pady=3)
+        self._contour_combo.bind("<<ComboboxSelected>>", self._on_contour_changed)
+        
+        # Contour description
+        self._contour_info = ttk.Label(
+            self._config_frame, 
+            text="smooth curves, CNC-friendly",
+            font=("SF Pro", 7), foreground="gray"
+        )
+        self._contour_info.grid(row=5, column=2, padx=2, pady=3, sticky='w')
+        
         # === ADVANCED: Radar Plot for multi-parameter optimization ===
-        # Row 5: Radar plot toggle
+        # Row 6: Radar plot toggle
         self._radar_enabled_var = tk.BooleanVar(value=False)
         self._radar_check = ttk.Checkbutton(
             self._config_frame, text="Advanced Tuning (Radar):",
             variable=self._radar_enabled_var,
             command=self._on_radar_toggle
         )
-        self._radar_check.grid(row=5, column=0, padx=5, pady=3, sticky='e')
+        self._radar_check.grid(row=6, column=0, padx=5, pady=3, sticky='e')
         
         # Radar widget (initially hidden)
         self._radar_frame = ttk.Frame(self._config_frame)
-        self._radar_frame.grid(row=5, column=1, columnspan=2, padx=5, pady=3, sticky='w')
+        self._radar_frame.grid(row=6, column=1, columnspan=2, padx=5, pady=3, sticky='w')
         
         try:
             from ui.widgets.radar_widget import RadarWidget
@@ -452,6 +484,27 @@ class PlateDesignerTab(ttk.Frame):
         
         # Update viewmodel (accepts spine percentage only)
         self._viewmodel.set_zone_weights(spine_pct)
+    
+    def _on_contour_changed(self, event=None):
+        """Handle contour type selection change."""
+        contour_name = self._contour_var.get()
+        
+        # Update info label with description
+        descriptions = {
+            "RECTANGLE": "fixed rectangular shape",
+            "GOLDEN_RECT": "φ ratio rectangle (1:1.618)",
+            "ELLIPSE": "smooth elliptical shape",
+            "OVOID": "egg shape, narrow at top",
+            "SUPERELLIPSE": "squircle (rounded corners)",
+            "ORGANIC": "smooth curves, CNC-friendly",
+            "ERGONOMIC": "body-conforming shape",
+            "FREEFORM": "fully evolvable spline",
+            "AUTO": "let evolution choose shape"
+        }
+        self._contour_info.config(text=descriptions.get(contour_name, ""))
+        
+        # Update viewmodel
+        self._viewmodel.set_contour_type(contour_name)
     
     def _on_radar_toggle(self):
         """Toggle radar widget visibility."""

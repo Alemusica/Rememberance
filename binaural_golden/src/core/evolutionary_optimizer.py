@@ -66,11 +66,16 @@ class EvolutionConfig:
     
     # Vincoli
     allowed_contours: List[ContourType] = field(default_factory=lambda: [
-        ContourType.GOLDEN_RECT,
         ContourType.RECTANGLE,
+        ContourType.GOLDEN_RECT,
         ContourType.ELLIPSE,
         ContourType.OVOID,
+        ContourType.SUPERELLIPSE,
+        ContourType.ORGANIC,
+        ContourType.ERGONOMIC,
+        ContourType.FREEFORM,
     ])
+    fixed_contour: Optional[ContourType] = None  # If set, only use this contour type
     max_cutouts: int = 4
     
     # Symmetry enforcement (LUTHERIE: like violin/guitar plates)
@@ -262,7 +267,12 @@ class EvolutionaryOptimizer:
         self._population = []
         
         n = self.config.population_size
-        contours = self.config.allowed_contours
+        
+        # Use fixed contour or all allowed contours
+        if self.config.fixed_contour is not None:
+            contours = [self.config.fixed_contour]
+        else:
+            contours = self.config.allowed_contours
         n_contours = len(contours)
         
         # Dimensioni base da persona
@@ -270,7 +280,7 @@ class EvolutionaryOptimizer:
         base_width = self.person.recommended_plate_width
         
         for i in range(n):
-            # Varia contour type
+            # Varia contour type (cycling through allowed types)
             contour = contours[i % n_contours]
             
             # Varia dimensioni
@@ -422,6 +432,12 @@ class EvolutionaryOptimizer:
         """Inietta individui casuali per diversità."""
         n_inject = int(len(population) * self.config.diversity_injection_rate)
         
+        # Determine which contour to use
+        if self.config.fixed_contour is not None:
+            contour = self.config.fixed_contour
+        else:
+            contour = np.random.choice(self.config.allowed_contours)
+        
         for i in range(n_inject):
             if i < len(population):
                 # Sostituisci individuo con uno nuovo
@@ -429,7 +445,7 @@ class EvolutionaryOptimizer:
                     length=self.person.recommended_plate_length * np.random.uniform(0.85, 1.15),
                     width=self.person.recommended_plate_width * np.random.uniform(0.85, 1.15),
                     thickness_base=np.random.uniform(0.010, 0.022),
-                    contour_type=np.random.choice(self.config.allowed_contours),
+                    contour_type=contour if self.config.fixed_contour else np.random.choice(self.config.allowed_contours),
                 )
                 # Non sostituire elite
                 replace_idx = np.random.randint(self.config.elite_count, len(population))

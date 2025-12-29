@@ -114,6 +114,9 @@ class PlateDesignerState:
     spine_weight: float = 0.70  # 70% priority on spine flatness
     head_weight: float = 0.30   # 30% priority on head/ear flatness
     
+    # Contour type for plate shape
+    contour_type: str = "ORGANIC"  # Default: smooth organic curves
+    
     # Advanced optimization weights (from radar widget)
     energy_weight: float = 0.7   # Vibration intensity
     flatness_weight: float = 0.5  # Frequency response uniformity
@@ -275,6 +278,18 @@ class PlateDesignerViewModel:
             self._state.max_cutouts = max_cutouts
         self._notify_observers()
     
+    def set_contour_type(self, contour_name: str):
+        """
+        Set the plate contour type for evolution.
+        
+        Args:
+            contour_name: One of RECTANGLE, GOLDEN_RECT, ELLIPSE, OVOID,
+                         SUPERELLIPSE, ORGANIC, ERGONOMIC, FREEFORM, AUTO
+        """
+        with self._lock:
+            self._state.contour_type = contour_name
+        self._notify_observers()
+    
     def set_zone_weights(self, spine_pct: int):
         """
         Set zone weights for frequency response optimization.
@@ -350,12 +365,29 @@ class PlateDesignerViewModel:
         
         self._notify_observers()
         
+        # Determine fixed contour from user selection
+        fixed_contour = None
+        if self._state.contour_type != "AUTO":
+            # Map string to ContourType enum
+            contour_map = {
+                "RECTANGLE": ContourType.RECTANGLE,
+                "GOLDEN_RECT": ContourType.GOLDEN_RECT,
+                "ELLIPSE": ContourType.ELLIPSE,
+                "OVOID": ContourType.OVOID,
+                "SUPERELLIPSE": ContourType.SUPERELLIPSE,
+                "ORGANIC": ContourType.ORGANIC,
+                "ERGONOMIC": ContourType.ERGONOMIC,
+                "FREEFORM": ContourType.FREEFORM,
+            }
+            fixed_contour = contour_map.get(self._state.contour_type)
+        
         # Create config
         config = EvolutionConfig(
             population_size=self._state.population_size,
             n_generations=self._state.max_generations,
             mutation_rate=self._state.mutation_rate,
             max_cutouts=self._state.max_cutouts,
+            fixed_contour=fixed_contour,  # None means AUTO (evolve contour type)
         )
         
         # Create zone weights for frequency response optimization
