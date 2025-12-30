@@ -256,12 +256,13 @@ class PlateDesignerTab(ttk.Frame):
         self._create_label(self._config_frame, "Contour:").grid(
             row=5, column=0, padx=5, pady=3, sticky='e')
         
-        self._contour_var = tk.StringVar(value="ORGANIC")  # Default: organic curves
+        self._contour_var = tk.StringVar(value="VESICA_PISCIS")  # Default: sacred geometry
         self._contour_options = [
             "RECTANGLE",      # Fixed rectangle
             "GOLDEN_RECT",    # Golden ratio rectangle
             "ELLIPSE",        # Smooth ellipse
             "OVOID",          # Egg shape (narrower at one end)
+            "VESICA_PISCIS",  # Sacred geometry (two overlapping circles)
             "SUPERELLIPSE",   # Squircle (rounded rectangle)
             "ORGANIC",        # Fourier-based blob (guitar-like)
             "ERGONOMIC",      # Body-conforming shape

@@ -64,12 +64,19 @@ class EvolutionConfig:
     diversity_threshold: float = 0.1
     diversity_injection_rate: float = 0.1
     
-    # Vincoli
+    # Vincoli dimensionali (STANDARD: 210cm x 80cm = 1.68 m²)
+    # La superficie non può superare il +20% dello standard
+    max_surface_area: float = 2.0  # m² (210x80 + 20% margin)
+    standard_length: float = 2.10  # m (reference board)
+    standard_width: float = 0.80   # m (reference board)
+    
+    # Vincoli contorno
     allowed_contours: List[ContourType] = field(default_factory=lambda: [
         ContourType.RECTANGLE,
         ContourType.GOLDEN_RECT,
         ContourType.ELLIPSE,
         ContourType.OVOID,
+        ContourType.VESICA_PISCIS,
         ContourType.SUPERELLIPSE,
         ContourType.ORGANIC,
         ContourType.ERGONOMIC,
@@ -275,17 +282,35 @@ class EvolutionaryOptimizer:
             contours = self.config.allowed_contours
         n_contours = len(contours)
         
-        # Dimensioni base da persona
-        base_length = self.person.recommended_plate_length
-        base_width = self.person.recommended_plate_width
+        # Dimensioni base - USA STANDARD 210x80 cm come riferimento
+        # ma adatta alla persona se necessario
+        base_length = min(self.person.recommended_plate_length, self.config.standard_length)
+        base_width = min(self.person.recommended_plate_width, self.config.standard_width)
+        
+        # Assicura che la superficie non ecceda il massimo
+        max_surface = self.config.max_surface_area
+        current_surface = base_length * base_width
+        if current_surface > max_surface:
+            scale = np.sqrt(max_surface / current_surface)
+            base_length *= scale
+            base_width *= scale
         
         for i in range(n):
             # Varia contour type (cycling through allowed types)
             contour = contours[i % n_contours]
             
-            # Varia dimensioni
+            # Varia dimensioni (±10% ma controlla superficie)
             length_var = np.random.uniform(0.9, 1.1)
             width_var = np.random.uniform(0.9, 1.1)
+            
+            # Check superficie non ecceda max
+            proposed_length = base_length * length_var
+            proposed_width = base_width * width_var
+            if proposed_length * proposed_width > max_surface:
+                # Scale down to fit
+                scale = np.sqrt(max_surface / (proposed_length * proposed_width))
+                length_var *= scale
+                width_var *= scale
             
             # Varia spessore
             thickness = np.random.uniform(0.012, 0.020)

@@ -353,6 +353,73 @@ class KnowledgeBase:
             "domains": domain_counts,
         }
     
+    def add_paper(self, paper: Paper) -> bool:
+        """
+        Add a paper to the knowledge base.
+        
+        Args:
+            paper: Paper object with title, authors, year, etc.
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Build CREATE query
+        data = {
+            "title": paper.title,
+            "authors": paper.authors,
+            "year": paper.year,
+            "abstract": paper.abstract,
+            "domains": paper.domains,
+            "keywords": paper.keywords,
+            "section": paper.section,
+            "doi": paper.doi,
+        }
+        
+        # Generate ID from first author and year
+        author_key = paper.authors[0].split()[-1].lower() if paper.authors else "unknown"
+        paper_id = f"{author_key}{paper.year}" if paper.year else author_key
+        
+        # Clean data (remove None values)
+        data = {k: v for k, v in data.items() if v is not None}
+        
+        sql = f"CREATE paper:{paper_id} CONTENT {json.dumps(data)}"
+        
+        try:
+            response = requests.post(
+                f"{self.base_url}/sql",
+                headers={
+                    "Accept": "application/json",
+                    "surreal-ns": self.namespace,
+                    "surreal-db": self.database,
+                },
+                auth=self.auth,
+                data=sql,
+                timeout=10
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            if isinstance(result, list) and result[0].get("status") == "OK":
+                # Clear cache
+                self.all_papers.cache_clear()
+                print(f"✓ Added: {paper.title}")
+                return True
+            else:
+                print(f"⚠️ Failed to add paper: {result}")
+                return False
+                
+        except Exception as e:
+            print(f"⚠️ Error adding paper: {e}")
+            return False
+    
+    def add_papers_batch(self, papers: List[Paper]) -> int:
+        """Add multiple papers. Returns count of successful additions."""
+        success_count = 0
+        for paper in papers:
+            if self.add_paper(paper):
+                success_count += 1
+        return success_count
+    
     def print_insights(self, topic: str):
         """Print formatted insights for a topic."""
         insights = self.get_insights(topic)

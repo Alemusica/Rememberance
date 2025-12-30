@@ -426,18 +426,8 @@ class EvolutionCanvas(tk.Canvas):
                 self.create_line(points + points[:2], fill=outline, 
                                 width=width, smooth=True)
         
-        elif contour_type == ContourType.VITRUVIAN:
-            # Human-proportioned rounded shape
-            points = self._generate_vitruvian_points(cx, cy, rx, ry, n_points=60)
-            if fill:
-                self.create_polygon(points, fill=fill, outline=outline,
-                                   width=width, smooth=True)
-            else:
-                self.create_line(points + points[:2], fill=outline,
-                                width=width, smooth=True)
-        
         elif contour_type == ContourType.VESICA_PISCIS:
-            # Two overlapping circles (sacred geometry)
+            # Sacred geometry: two overlapping circles
             points = self._generate_vesica_points(cx, cy, rx, ry, n_points=60)
             if fill:
                 self.create_polygon(points, fill=fill, outline=outline,
@@ -660,8 +650,16 @@ class EvolutionCanvas(tk.Canvas):
         Generate freeform spline shape from control points.
         Falls back to organic shape if no control points provided.
         """
-        if not control_points or len(control_points) < 4:
-            # Fallback to organic shape
+        # FIX: Handle numpy arrays properly (can't use `not array` for truthiness)
+        if control_points is None:
+            return self._generate_organic_points(cx, cy, rx, ry, n_points)
+        
+        # Check length (works for both list and numpy array)
+        try:
+            if len(control_points) < 4:
+                return self._generate_organic_points(cx, cy, rx, ry, n_points)
+        except TypeError:
+            # Not iterable
             return self._generate_organic_points(cx, cy, rx, ry, n_points)
         
         # Simple interpolation through control points
@@ -779,9 +777,21 @@ class EvolutionCanvas(tk.Canvas):
             # S-curve shape (torsional mode tuning)
             self._draw_s_curve(cut_cx, cut_cy, cut_rx, cut_ry, rotation, fill_color, outline_color)
             
-        elif shape == 'hexagon':
-            # Regular hexagon (force distribution)
-            self._draw_hexagon(cut_cx, cut_cy, cut_rx, cut_ry, rotation, fill_color, outline_color)
+        elif shape == 'vesica':
+            # Vesica piscis (sacred geometry)
+            self._draw_vesica_cutout(cut_cx, cut_cy, cut_rx, cut_ry, rotation, fill_color, outline_color)
+            
+        elif shape == 'spiral':
+            # Golden spiral cutout
+            self._draw_spiral_cutout(cut_cx, cut_cy, cut_rx, cut_ry, rotation, fill_color, outline_color)
+            
+        elif shape == 'leaf':
+            # Leaf shape (natural organic form)
+            self._draw_leaf_cutout(cut_cx, cut_cy, cut_rx, cut_ry, rotation, fill_color, outline_color)
+            
+        elif shape == 'wave':
+            # Wave shape (sinusoidal closed form)
+            self._draw_wave_cutout(cut_cx, cut_cy, cut_rx, cut_ry, rotation, fill_color, outline_color)
             
         elif shape == 'freeform':
             # Freeform polygon defined by control_points (fresa manuale)
@@ -1015,6 +1025,96 @@ class EvolutionCanvas(tk.Canvas):
         for t in np.linspace(1, -1, 20):
             px = rx * t
             py = ry * 0.6 * np.tanh(t * 2) - slot_width/2
+            rpx = px * np.cos(angle) - py * np.sin(angle)
+            rpy = px * np.sin(angle) + py * np.cos(angle)
+            points.extend([cx + rpx, cy + rpy])
+        self.create_polygon(points, fill=fill, outline=outline, width=1, smooth=True)
+    
+    def _draw_vesica_cutout(self, cx, cy, rx, ry, angle, fill, outline):
+        """
+        Draw Vesica Piscis cutout (sacred geometry).
+        
+        Two overlapping circles creating almond shape.
+        Ancient symbol with excellent acoustic properties.
+        """
+        points = []
+        # Generate vesica shape (intersection of two circles)
+        for t in np.linspace(0, 2*np.pi, 40):
+            # Modulate radius to create almond/eye shape
+            r_factor = 1.0 + 0.4 * np.cos(2 * t)
+            px = rx * r_factor * np.cos(t)
+            py = ry * 0.6 * np.sin(t)  # Narrower vertically
+            rpx = px * np.cos(angle) - py * np.sin(angle)
+            rpy = px * np.sin(angle) + py * np.cos(angle)
+            points.extend([cx + rpx, cy + rpy])
+        self.create_polygon(points, fill=fill, outline=outline, width=1, smooth=True)
+    
+    def _draw_spiral_cutout(self, cx, cy, rx, ry, angle, fill, outline):
+        """
+        Draw golden spiral cutout.
+        
+        Based on Fibonacci/golden ratio spiral.
+        Natural form found in nautilus shells.
+        """
+        points = []
+        phi = (1 + np.sqrt(5)) / 2  # Golden ratio
+        # Generate spiral as closed shape
+        n_turns = 1.5
+        for i in range(50):
+            t = n_turns * np.pi * i / 25
+            r = 0.15 + 0.35 * (phi ** (t / np.pi))
+            px = rx * r * np.cos(t + angle)
+            py = ry * r * np.sin(t + angle)
+            points.extend([cx + px, cy + py])
+        # Return path (inner edge with smaller radius)
+        for i in range(49, -1, -1):
+            t = n_turns * np.pi * i / 25
+            r = 0.1 + 0.25 * (phi ** (t / np.pi))
+            px = rx * r * np.cos(t + angle)
+            py = ry * r * np.sin(t + angle)
+            points.extend([cx + px, cy + py])
+        self.create_polygon(points, fill=fill, outline=outline, width=1, smooth=True)
+    
+    def _draw_leaf_cutout(self, cx, cy, rx, ry, angle, fill, outline):
+        """
+        Draw leaf-shaped cutout (natural organic form).
+        
+        Based on botanical leaf geometry.
+        Smooth curves reduce stress concentration.
+        """
+        points = []
+        for t in np.linspace(0, 2*np.pi, 40):
+            # Leaf shape: pointed at both ends, bulging in middle
+            r_factor = np.sin(t) ** 2  # 0 at ends, 1 in middle
+            px = rx * np.cos(t)  # Length along x
+            py = ry * r_factor * np.sin(t) * 0.8  # Width modulated
+            rpx = px * np.cos(angle) - py * np.sin(angle)
+            rpy = px * np.sin(angle) + py * np.cos(angle)
+            points.extend([cx + rpx, cy + rpy])
+        self.create_polygon(points, fill=fill, outline=outline, width=1, smooth=True)
+    
+    def _draw_wave_cutout(self, cx, cy, rx, ry, angle, fill, outline):
+        """
+        Draw wave-shaped cutout (closed sinusoidal form).
+        
+        Natural undulating shape like water waves.
+        Good for breaking up standing wave patterns.
+        """
+        points = []
+        n_waves = 3  # Number of wave cycles
+        # Top edge (positive wave)
+        for i in range(40):
+            t = i / 39
+            px = rx * (2 * t - 1)  # -rx to +rx
+            py = ry * 0.3 * (1 + np.sin(n_waves * 2 * np.pi * t))
+            rpx = px * np.cos(angle) - py * np.sin(angle)
+            rpy = px * np.sin(angle) + py * np.cos(angle)
+            points.extend([cx + rpx, cy + rpy])
+        # Bottom edge (negative wave, reversed)
+        for i in range(39, -1, -1):
+            t = i / 39
+            px = rx * (2 * t - 1)
+            py = -ry * 0.3 * (1 + np.sin(n_waves * 2 * np.pi * t + np.pi))
             rpx = px * np.cos(angle) - py * np.sin(angle)
             rpy = px * np.sin(angle) + py * np.cos(angle)
             points.extend([cx + rpx, cy + rpy])

@@ -374,6 +374,7 @@ class PlateDesignerViewModel:
                 "GOLDEN_RECT": ContourType.GOLDEN_RECT,
                 "ELLIPSE": ContourType.ELLIPSE,
                 "OVOID": ContourType.OVOID,
+                "VESICA_PISCIS": ContourType.VESICA_PISCIS,
                 "SUPERELLIPSE": ContourType.SUPERELLIPSE,
                 "ORGANIC": ContourType.ORGANIC,
                 "ERGONOMIC": ContourType.ERGONOMIC,

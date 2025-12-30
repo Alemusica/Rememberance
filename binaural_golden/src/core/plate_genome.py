@@ -31,35 +31,34 @@ class ContourType(Enum):
     ELLIPSE = "ellipse"
     GOLDEN_RECT = "golden_rectangle"
     OVOID = "ovoid"
-    SUPERELLIPSE = "superellipse"  # Squircle (rounded rectangle smooth)
-    ORGANIC = "organic"            # Blob-like organic shape (Fourier)
-    ERGONOMIC = "ergonomic"        # Body-conforming shape
-    FREEFORM = "freeform"          # Fully evolvable spline
+    VESICA_PISCIS = "vesica_piscis"  # Sacred geometry: two overlapping circles
+    SUPERELLIPSE = "superellipse"    # Squircle (rounded rectangle smooth)
+    ORGANIC = "organic"              # Blob-like organic shape (Fourier)
+    ERGONOMIC = "ergonomic"          # Body-conforming shape
+    FREEFORM = "freeform"            # Fully evolvable spline
 
 
 # Cutout shapes available for optimization
 # L'optimizer può usare qualsiasi forma, incluso FREEFORM con poligoni arbitrari
 # Tutte le forme sono lavorabili con CNC/fresa
+# Cutout shapes - ONLY ORGANIC/CURVED shapes
+# Nature doesn't make straight lines! Good acoustic design follows nature.
+# Reference: Stradivari f-holes, Schleske violin acoustics
 CUTOUT_SHAPES = [
-    # === FORME CURVE (CNC/fresa) ===
+    # === FORME ORGANICHE (come in natura) ===
     "ellipse",      # Standard f-hole style (violin/cello)
-    "circle",       # Cerchio perfetto (semplice per CNC)
+    "circle",       # Cerchio perfetto
     "crescent",     # Mezzaluna - bilanciamento modi asimmetrici
     "tear",         # Goccia - per zone di stress direzionale
     "f_hole",       # Stylized f-hole (double curve like violin)
-    "arc",          # Arco semplice (settore circolare)
     "kidney",       # Forma a rene (sound port style)
     "s_curve",      # Curva a S (per modo torsionale)
-    # === FORME MISTE (CNC/fresa) ===
-    "rounded_rect", # Rectangle with rounded corners (CNC friendly)
-    "slot",         # Long thin slot (guitar soundhole style)
-    "stadium",      # Ovale allungato (slot arrotondato)
-    # === FORME RETTILINEE (CNC/taglio laser) ===
-    "rectangle",    # Rectangular slot
-    "diamond",      # Rotated square
-    "hexagon",      # Esagono (distribuzione forze)
-    # === FORMA LIBERA ===
-    "freeform",     # Poligono arbitrario definito da control_points
+    "vesica",       # Vesica piscis (sacred geometry)
+    "spiral",       # Spirale logaritmica (golden ratio)
+    "leaf",         # Forma a foglia (naturale)
+    "wave",         # Onda sinusoidale chiusa
+    # === FORMA LIBERA (fresa manuale) ===
+    "freeform",     # Poligono arbitrario con curve smooth
 ]
 
 @dataclass
@@ -758,8 +757,8 @@ class PlateGenome:
             all_types = [
                 ContourType.RECTANGLE, ContourType.GOLDEN_RECT, 
                 ContourType.ELLIPSE, ContourType.OVOID,
-                ContourType.SUPERELLIPSE, ContourType.ORGANIC,
-                ContourType.ERGONOMIC, ContourType.FREEFORM
+                ContourType.VESICA_PISCIS, ContourType.SUPERELLIPSE, 
+                ContourType.ORGANIC, ContourType.ERGONOMIC, ContourType.FREEFORM
             ]
             new_genome.contour_type = np.random.choice(all_types)
             
@@ -803,20 +802,41 @@ class PlateGenome:
         # Muta cutouts esistenti
         new_genome.cutouts = [c.mutate(0.03) for c in self.cutouts]
         
-        # Aggiungi/rimuovi cutouts (LIBERTA' TOTALE per l'ottimizzatore)
+        # ═══════════════════════════════════════════════════════════════════════
+        # PHYSICS-GUIDED CUTOUT PLACEMENT (Schleske 2002, Fletcher & Rossing 1998)
+        # Instead of random placement, use modal analysis to find optimal positions
+        # ═══════════════════════════════════════════════════════════════════════
         if self.max_cutouts > 0:
             if np.random.random() < p_add_cutout and len(new_genome.cutouts) < self.max_cutouts:
-                # L'ottimizzatore sceglie liberamente forma, dimensioni, posizione
-                new_genome.cutouts.append(CutoutGene(
-                    x=np.random.uniform(0.1, 0.9),
-                    y=np.random.uniform(0.15, 0.85),
-                    width=np.random.uniform(0.02, 0.15),   # Qualsiasi larghezza
-                    height=np.random.uniform(0.02, 0.15), # Qualsiasi altezza
-                    rotation=np.random.uniform(0, 2 * np.pi),
-                    shape=np.random.choice(CUTOUT_SHAPES),  # Qualsiasi forma
-                    corner_radius=np.random.uniform(0.0, 0.8),
-                    aspect_bias=np.random.uniform(0.5, 2.0),
-                ))
+                # Try physics-guided placement first (80% of the time)
+                cutout_params = None
+                if np.random.random() < 0.8:
+                    cutout_params = self._get_physics_guided_cutout(new_genome.cutouts)
+                
+                if cutout_params:
+                    # Use physics-guided position and shape
+                    new_genome.cutouts.append(CutoutGene(
+                        x=cutout_params["x"],
+                        y=cutout_params["y"],
+                        width=cutout_params["width"],
+                        height=cutout_params["height"],
+                        rotation=cutout_params["rotation"],
+                        shape=cutout_params["shape"],
+                        corner_radius=cutout_params.get("corner_radius", 0.3),
+                        aspect_bias=cutout_params.get("aspect_bias", 1.0),
+                    ))
+                else:
+                    # Fallback to random (still organic shapes only)
+                    new_genome.cutouts.append(CutoutGene(
+                        x=np.random.uniform(0.1, 0.9),
+                        y=np.random.uniform(0.15, 0.85),
+                        width=np.random.uniform(0.02, 0.15),
+                        height=np.random.uniform(0.02, 0.15),
+                        rotation=np.random.uniform(0, 2 * np.pi),
+                        shape=np.random.choice(CUTOUT_SHAPES),
+                        corner_radius=np.random.uniform(0.0, 0.8),
+                        aspect_bias=np.random.uniform(0.5, 2.0),
+                    ))
             
             if np.random.random() < p_remove_cutout and len(new_genome.cutouts) > 0:
                 idx = np.random.randint(len(new_genome.cutouts))
@@ -926,6 +946,49 @@ class PlateGenome:
         
         # Then enforce symmetry
         return mutated.enforce_bilateral_symmetry()
+    
+    def _get_physics_guided_cutout(
+        self,
+        existing_cutouts: List['CutoutGene'],
+    ) -> Optional[Dict]:
+        """
+        Get physics-guided cutout parameters using modal analysis.
+        
+        PHYSICS PRINCIPLE (Schleske 2002, Fletcher & Rossing 1998):
+        - Cutout at ANTINODE → maximum frequency shift
+        - Cutout at NODE → minimal effect on that mode
+        - F-holes in violins are positioned to tune specific modes
+        
+        Args:
+            existing_cutouts: List of existing CutoutGene objects
+        
+        Returns:
+            Dict with cutout parameters, or None if no good position found
+        """
+        try:
+            from .modal_guidance import ModalAnalyzer, create_physics_guided_cutout
+            
+            # Create analyzer for current plate dimensions
+            analyzer = ModalAnalyzer(
+                length=self.length,
+                width=self.width,
+                thickness=self.thickness_base,
+            )
+            
+            # Compute modes
+            analyzer.compute_modes(n_modes=10)
+            
+            # Get physics-guided suggestion
+            return create_physics_guided_cutout(
+                genome=self,
+                analyzer=analyzer,
+                existing_cutouts=existing_cutouts,
+            )
+        except Exception as e:
+            # Fallback to None (caller will use random placement)
+            import logging
+            logging.getLogger(__name__).debug(f"Physics-guided cutout failed: {e}")
+            return None
     
     def crossover(self, other: 'PlateGenome', alpha: float = 0.5) -> 'PlateGenome':
         """

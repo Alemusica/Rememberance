@@ -78,6 +78,18 @@ try:
 except ImportError:
     pass
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PYMOO MULTI-OBJECTIVE OPTIMIZER (NSGA-II/NSGA-III)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .pymoo_optimizer import (
+        PymooOptimizer, PymooConfig, PymooResult,
+        PlateOptimizationProblem, compute_ear_uniformity_from_result,
+        PYMOO_AVAILABLE
+    )
+except ImportError:
+    PYMOO_AVAILABLE = False
+
 __all__ = [
     # Audio
     'AudioEngine', 'golden_fade', 'golden_ease',
@@ -107,4 +119,7 @@ __all__ = [
     # DML Frequency Model (from Harris 2010, Aures 2001, Bank 2010)
     'DMLFrequencyModel', 'DMLResponse', 'ModeShape', 'ExciterCoupling',
     'ExciterStrategy', 'create_dml_model_for_genome', 'analyze_exciter_placement',
+    # Pymoo Multi-Objective Optimizer (NSGA-II/III for ear L/R balance)
+    'PymooOptimizer', 'PymooConfig', 'PymooResult', 'PlateOptimizationProblem',
+    'compute_ear_uniformity_from_result', 'PYMOO_AVAILABLE',
 ]

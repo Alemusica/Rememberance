@@ -113,6 +113,10 @@ class FitnessResult:
     spine_flatness_score: float = 0.0  # Flatness at spine
     head_flatness_score: float = 0.0   # Flatness at ears
     
+    # EAR L/R UNIFORMITY - Critical for binaural balance!
+    # This is the KEY metric for multi-objective optimization
+    ear_uniformity_score: float = 0.0  # L/R balance [0-1], 1=perfect symmetry
+    
     # Structural diagnostics (NEW!)
     max_deflection_mm: float = 0.0     # Max deflection under person weight
     deflection_is_safe: bool = True     # Deflection < 10mm limit
@@ -138,6 +142,7 @@ class FitnessResult:
         return (
             f"Fitness({self.total_fitness:.3f}: "
             f"flat={self.flatness_score:.2f}, spine={self.spine_coupling_score:.2f}, "
+            f"ear_LR={self.ear_uniformity_score:.2f}, "
             f"mass={self.low_mass_score:.2f}, manuf={self.manufacturability_score:.2f}, "
             f"struct={self.structural_score:.2f}, defl={self.max_deflection_mm:.1f}mm)"
         )
@@ -273,6 +278,9 @@ class FitnessEvaluator:
         result.spine_flatness_score = self._score_zone_flatness(spine_response)
         result.head_flatness_score = self._score_zone_flatness(head_response)
         
+        # 5b. EAR L/R UNIFORMITY - Critical metric for binaural balance!
+        result.ear_uniformity_score = self._score_ear_uniformity(head_response)
+        
         # Flatness combinato con zone_weights (70% spine, 30% head)
         result.flatness_score = (
             self.zone_weights.spine * result.spine_flatness_score +
@@ -298,13 +306,15 @@ class FitnessEvaluator:
         result.structural_score = self._score_structural_integrity(genome, result)
 
         # Score totale pesato
+        # CRITICAL: Include ear_uniformity with HIGH weight for L/R balance!
         result.total_fitness = (
             self.objectives.flatness * result.flatness_score +
             self.objectives.spine_coupling * result.spine_coupling_score +
             self.objectives.low_mass * result.low_mass_score +
             self.objectives.manufacturability * result.manufacturability_score +
             0.1 * result.exciter_coupling_score +  # Bonus for good exciter placement
-            0.05 * result.groove_tuning_score      # Bonus for effective grooves
+            0.05 * result.groove_tuning_score +    # Bonus for effective grooves
+            0.4 * result.ear_uniformity_score      # HIGH weight for L/R balance!
         )
         
         # STRUCTURAL PENALTY: Reduce fitness if deflection exceeds limit
@@ -387,7 +397,9 @@ class FitnessEvaluator:
         cutout_frequency_shift = 1.0 - 0.3 * cutout_area_fraction
         
         # Prendi primi n_modes
-        nx, ny = 20, 12  # Risoluzione griglia per mode shapes
+        # IMPORTANT: Use ODD grid sizes to ensure exact symmetry around y=0.5
+        # nx=21 and ny=13 give exact center points at x=0.5 and y=0.5
+        nx, ny = 21, 13  # Odd numbers for symmetric grids
         x = np.linspace(0, 1, nx)
         y = np.linspace(0, 1, ny)
         X, Y = np.meshgrid(x, y, indexing='ij')
@@ -583,6 +595,10 @@ class FitnessEvaluator:
         
         Per l'ascolto binaurale, vogliamo risposta piatta alle orecchie.
         
+        CRITICAL FOR L/R BALANCE:
+        For symmetric plates, L and R ears should have identical responses
+        because they are symmetric about y=0.5 centerline.
+        
         Returns:
             Array (n_head_points, n_freq) con risposta normalizzata
         """
@@ -591,12 +607,33 @@ class FitnessEvaluator:
         response = np.zeros((n_head, n_freq))
         
         zeta = self.material.damping_ratio
-        nx, ny = mode_shapes.shape[1], mode_shapes.shape[2]
+        
+        # Grid dimensions from mode shapes
+        if len(mode_shapes) > 0:
+            nx, ny = mode_shapes.shape[1], mode_shapes.shape[2]
+        else:
+            nx, ny = 20, 12
         
         for pos_idx, (x_norm, y_norm) in enumerate(self.head_positions):
-            # Indici griglia più vicini
-            ix = min(int(x_norm * nx), nx - 1)
-            iy = min(int(y_norm * ny), ny - 1)
+            # Use bilinear interpolation instead of nearest neighbor
+            # This gives smoother, more symmetric responses
+            x_grid = x_norm * (nx - 1)
+            y_grid = y_norm * (ny - 1)
+            
+            # Integer and fractional parts
+            ix0 = int(np.floor(x_grid))
+            iy0 = int(np.floor(y_grid))
+            ix1 = min(ix0 + 1, nx - 1)
+            iy1 = min(iy0 + 1, ny - 1)
+            
+            fx = x_grid - ix0
+            fy = y_grid - iy0
+            
+            # Bilinear weights
+            w00 = (1 - fx) * (1 - fy)
+            w01 = (1 - fx) * fy
+            w10 = fx * (1 - fy)
+            w11 = fx * fy
             
             for f_idx, f in enumerate(self.test_frequencies):
                 omega = 2 * np.pi * f
@@ -605,14 +642,22 @@ class FitnessEvaluator:
                 for mode_idx, f_n in enumerate(frequencies):
                     omega_n = 2 * np.pi * f_n
                     
+                    # Frequency response function
                     H = 1.0 / np.sqrt(
                         (1 - (omega/omega_n)**2)**2 + 
                         (2 * zeta * omega/omega_n)**2
                     )
                     
-                    # Mode shape a questa posizione
+                    # Mode shape value - use bilinear interpolation
                     if mode_idx < len(mode_shapes):
-                        phi = abs(mode_shapes[mode_idx, ix, iy])
+                        ms = mode_shapes[mode_idx]
+                        # Bilinear interpolation for smooth symmetric response
+                        phi = (w00 * ms[ix0, iy0] + 
+                               w01 * ms[ix0, iy1] + 
+                               w10 * ms[ix1, iy0] + 
+                               w11 * ms[ix1, iy1])
+                        # Use absolute value for modal amplitude
+                        phi = abs(phi)
                     else:
                         phi = 0.5
                     
@@ -621,7 +666,9 @@ class FitnessEvaluator:
                 response[pos_idx, f_idx] = total
         
         # Normalizza
-        response = response / (np.max(response) + 1e-10)
+        max_val = np.max(response)
+        if max_val > 1e-10:
+            response = response / max_val
         
         return response
     
@@ -657,6 +704,80 @@ class FitnessEvaluator:
         uniformity_bonus = np.clip(1 - spatial_std / 10, 0, 0.2)
         
         return min(score + uniformity_bonus, 1.0)
+    
+    def _score_ear_uniformity(self, head_response: np.ndarray) -> float:
+        """
+        Score for Left/Right ear uniformity (binaural balance).
+        
+        This is CRITICAL for proper binaural audio reproduction.
+        L/R imbalance causes localization errors and reduces therapy effectiveness.
+        
+        Args:
+            head_response: Array (n_positions, n_freq) where first 2 positions
+                          are left and right ears
+        
+        Returns:
+            Score [0, 1] where 1.0 = perfect L/R symmetry
+        """
+        if head_response is None or len(head_response) < 2:
+            return 0.0
+        
+        # Get left and right ear responses (first two positions)
+        left_ear = head_response[0]
+        right_ear = head_response[1]
+        
+        # Ensure both are 1D arrays
+        if len(left_ear.shape) > 1:
+            left_ear = np.mean(left_ear, axis=0)
+        if len(right_ear.shape) > 1:
+            right_ear = np.mean(right_ear, axis=0)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # METRIC 1: RMS Level Balance (60% weight)
+        # Perfect: L and R have same overall energy
+        # ═══════════════════════════════════════════════════════════════════════
+        left_rms = np.sqrt(np.mean(left_ear**2))
+        right_rms = np.sqrt(np.mean(right_ear**2))
+        
+        if left_rms + right_rms < 1e-10:
+            return 0.0
+        
+        min_rms = min(left_rms, right_rms)
+        max_rms = max(left_rms, right_rms)
+        
+        if max_rms < 1e-10:
+            return 0.0
+        
+        level_balance = min_rms / max_rms  # 1.0 = perfect balance
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # METRIC 2: Frequency-by-Frequency Correlation (40% weight)
+        # Perfect: L and R have same spectral shape
+        # ═══════════════════════════════════════════════════════════════════════
+        if len(left_ear) == len(right_ear) and len(left_ear) > 2:
+            # Pearson correlation
+            correlation = np.corrcoef(left_ear, right_ear)[0, 1]
+            if np.isnan(correlation):
+                correlation = 0.0
+            correlation = max(0.0, correlation)  # Clamp negative correlations
+            
+            # Also check frequency-by-frequency difference
+            diff_db = 20 * np.log10((np.abs(left_ear - right_ear) + 1e-10) / 
+                                    (np.maximum(left_ear, right_ear) + 1e-10))
+            mean_diff_db = np.mean(np.abs(diff_db))
+            
+            # Target: < 3 dB difference across all frequencies
+            spectral_match = np.clip(1 - mean_diff_db / 6.0, 0, 1)
+        else:
+            correlation = 0.5
+            spectral_match = 0.5
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # Combined Score: 50% level + 25% correlation + 25% spectral
+        # ═══════════════════════════════════════════════════════════════════════
+        uniformity = 0.50 * level_balance + 0.25 * correlation + 0.25 * spectral_match
+        
+        return float(np.clip(uniformity, 0.0, 1.0))
     
     def _score_flatness(
         self,
@@ -703,9 +824,12 @@ class FitnessEvaluator:
     
     def _score_low_mass(self, genome: PlateGenome) -> float:
         """
-        Score per massa bassa.
+        Score per massa bassa e superficie controllata.
         
         1.0 = massa < 8 kg, 0.0 = massa > 20 kg
+        
+        VINCOLO SUPERFICIE: max 2.0 m² (standard 210x80 + 20%)
+        Penalizza fortemente tavole troppo grandi.
         """
         mass = genome.get_mass(self.material.density)
         
@@ -713,11 +837,23 @@ class FitnessEvaluator:
         mass_min, mass_max = 8.0, 20.0
         
         if mass <= mass_min:
-            return 1.0
+            mass_score = 1.0
         elif mass >= mass_max:
-            return 0.0
+            mass_score = 0.0
         else:
-            return 1 - (mass - mass_min) / (mass_max - mass_min)
+            mass_score = 1 - (mass - mass_min) / (mass_max - mass_min)
+        
+        # SURFACE AREA CONSTRAINT (standard: 210x80 = 1.68 m²)
+        surface_area = genome.length * genome.width
+        max_surface = 2.0  # m² (20% over standard)
+        
+        if surface_area > max_surface:
+            # Heavy penalty for oversized plates
+            oversize_ratio = surface_area / max_surface
+            surface_penalty = min(1.0, (oversize_ratio - 1.0) * 2.0)  # 50% over = full penalty
+            mass_score *= (1.0 - surface_penalty * 0.5)
+        
+        return mass_score
     
     def _score_manufacturability(self, genome: PlateGenome) -> float:
         """

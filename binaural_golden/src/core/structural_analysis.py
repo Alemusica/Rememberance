@@ -38,20 +38,48 @@ class BodyLoadDistribution:
     """
     Distribuzione del peso corporeo sulla tavola.
     
-    La persona sdraiata NON ha peso uniforme:
-    - Schiena (torace): ~40% del peso, zona centrale-alta
-    - Glutei/bacino: ~35% del peso, zona centrale
-    - Gambe: ~25% del peso, distribuito lungo
+    ANATOMICAL MODEL (Griffin 1990, Matsumoto 2002, Wu 1998):
+    In supine position, body contact is NOT uniform rectangles!
+    Contact occurs at specific anatomical points:
     
-    Posizioni normalizzate (0 = piedi, 1 = testa)
+    - OCCIPUT: Back of head, ~8% body weight, point contact
+    - SCAPULAE: Shoulder blades (L/R), ~15% each, oval contacts
+    - SACRUM/COCCYX: Tailbone area, ~35% (major support point)
+    - CALCANEI: Heels (L/R), ~5% total, point contacts
+    
+    The spine itself is NOT in contact (lumbar lordosis gap)!
+    
+    References:
+    - Griffin (1990). Handbook of Human Vibration
+    - Matsumoto & Griffin (2002). Effect of seat back support
+    - Wu et al. (1998). Biodynamic response in various postures
     """
-    # Zone corporee (start, end, weight_fraction)
-    HEAD: Tuple[float, float, float] = (0.88, 1.00, 0.08)    # 8% peso
-    SHOULDERS: Tuple[float, float, float] = (0.72, 0.88, 0.15)  # 15%
-    THORAX: Tuple[float, float, float] = (0.55, 0.72, 0.25)   # 25% (schiena)
-    PELVIS: Tuple[float, float, float] = (0.40, 0.55, 0.35)   # 35% (glutei)
-    THIGHS: Tuple[float, float, float] = (0.20, 0.40, 0.12)   # 12%
-    CALVES: Tuple[float, float, float] = (0.00, 0.20, 0.05)   # 5%
+    
+    # Anatomical contact points (normalized: x=0 feet, x=1 head, y=0.5 centerline)
+    # Each: (x_center, y_center, radius, weight_fraction)
+    OCCIPUT: Tuple[float, float, float, float] = (0.94, 0.50, 0.05, 0.08)      # Back of head
+    SCAPULA_L: Tuple[float, float, float, float] = (0.80, 0.35, 0.08, 0.075)   # Left shoulder blade
+    SCAPULA_R: Tuple[float, float, float, float] = (0.80, 0.65, 0.08, 0.075)   # Right shoulder blade
+    THORACIC_SPINE: Tuple[float, float, float, float] = (0.72, 0.50, 0.06, 0.10)  # Upper back contact
+    SACRUM: Tuple[float, float, float, float] = (0.50, 0.50, 0.12, 0.35)       # Pelvis/tailbone (MAJOR)
+    GLUTEAL_L: Tuple[float, float, float, float] = (0.48, 0.38, 0.06, 0.05)    # Left buttock
+    GLUTEAL_R: Tuple[float, float, float, float] = (0.48, 0.62, 0.06, 0.05)    # Right buttock
+    THIGH_L: Tuple[float, float, float, float] = (0.30, 0.40, 0.08, 0.06)      # Left thigh
+    THIGH_R: Tuple[float, float, float, float] = (0.30, 0.60, 0.08, 0.06)      # Right thigh
+    CALF_L: Tuple[float, float, float, float] = (0.12, 0.42, 0.05, 0.025)      # Left calf
+    CALF_R: Tuple[float, float, float, float] = (0.12, 0.58, 0.05, 0.025)      # Right calf
+    HEEL_L: Tuple[float, float, float, float] = (0.03, 0.42, 0.03, 0.025)      # Left heel (point)
+    HEEL_R: Tuple[float, float, float, float] = (0.03, 0.58, 0.03, 0.025)      # Right heel (point)
+    
+    # Legacy rectangular zones for backward compatibility
+    HEAD: Tuple[float, float, float] = (0.88, 1.00, 0.08)
+    SHOULDERS: Tuple[float, float, float] = (0.72, 0.88, 0.15)
+    THORAX: Tuple[float, float, float] = (0.55, 0.72, 0.25)
+    PELVIS: Tuple[float, float, float] = (0.40, 0.55, 0.35)
+    THIGHS: Tuple[float, float, float] = (0.20, 0.40, 0.12)
+    CALVES: Tuple[float, float, float] = (0.00, 0.20, 0.05)
+    
+    use_anatomical: bool = True  # Use anatomical model by default
     
     def get_pressure_map(
         self,
@@ -72,18 +100,72 @@ class BodyLoadDistribution:
         Returns:
             (x_grid, y_grid, pressure_Pa) - Pressione in Pascal
         """
+        if self.use_anatomical:
+            return self._anatomical_pressure_map(length, width, person_weight_kg, resolution)
+        else:
+            return self._rectangular_pressure_map(length, width, person_weight_kg, resolution)
+    
+    def _anatomical_pressure_map(
+        self,
+        length: float,
+        width: float,
+        person_weight_kg: float,
+        resolution: int = 50
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Generate pressure map using anatomical contact points.
+        
+        Each contact point creates a Gaussian pressure distribution.
+        """
         x = np.linspace(0, length, resolution)
         y = np.linspace(0, width, resolution)
         X, Y = np.meshgrid(x, y, indexing='ij')
         
-        # Inizializza pressione
         pressure = np.zeros_like(X)
         
-        # Larghezza corpo (centrato su y=width/2)
-        body_half_width = width * 0.35  # ~70% della larghezza tavola
+        # All anatomical contact points
+        contacts = [
+            self.OCCIPUT, self.SCAPULA_L, self.SCAPULA_R, self.THORACIC_SPINE,
+            self.SACRUM, self.GLUTEAL_L, self.GLUTEAL_R,
+            self.THIGH_L, self.THIGH_R, self.CALF_L, self.CALF_R,
+            self.HEEL_L, self.HEEL_R,
+        ]
+        
+        for x_norm, y_norm, radius_norm, weight_frac in contacts:
+            # Convert to absolute coordinates
+            x_center = x_norm * length
+            y_center = y_norm * width
+            radius = radius_norm * min(length, width)  # Scale radius to plate size
+            
+            # Gaussian pressure distribution (bell curve)
+            sigma = radius / 2.0  # Standard deviation
+            distance_sq = (X - x_center)**2 + (Y - y_center)**2
+            gaussian = np.exp(-distance_sq / (2 * sigma**2))
+            
+            # Normalize to integrate to total force
+            force_N = person_weight_kg * 9.81 * weight_frac
+            gaussian_integral = np.sum(gaussian) * (length / resolution) * (width / resolution)
+            if gaussian_integral > 1e-10:
+                pressure += force_N / gaussian_integral * gaussian
+        
+        return X, Y, pressure
+    
+    def _rectangular_pressure_map(
+        self,
+        length: float,
+        width: float,
+        person_weight_kg: float,
+        resolution: int = 50
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Legacy rectangular zone pressure map."""
+        x = np.linspace(0, length, resolution)
+        y = np.linspace(0, width, resolution)
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        pressure = np.zeros_like(X)
+        body_half_width = width * 0.35
         y_center = width / 2
         
-        # Per ogni zona corporea
         zones = [
             self.HEAD, self.SHOULDERS, self.THORAX,
             self.PELVIS, self.THIGHS, self.CALVES
@@ -93,7 +175,6 @@ class BodyLoadDistribution:
             x_start = x_start_norm * length
             x_end = x_end_norm * length
             
-            # Maschera spaziale (rettangolo smussato)
             x_mask = self._smooth_rect(X, x_start, x_end)
             y_mask = self._smooth_rect(Y, y_center - body_half_width, 
                                         y_center + body_half_width)
@@ -134,6 +215,84 @@ class DeflectionResult:
     max_deflection_pos: Tuple[float, float]  # Posizione max deflessione
     is_acceptable: bool            # Deflessione < limite
     safety_factor: float           # Fattore di sicurezza
+
+
+@dataclass
+class SpringSupport:
+    """
+    Spring support for plate (changes boundary conditions from simply-supported).
+    
+    PHYSICS: Instead of pinned edges, the plate rests on point springs.
+    This creates:
+    - Quasi-free boundary conditions at low stiffness
+    - Point support behavior at high stiffness  
+    - Rigid body modes (bounce, tilt) with compliant springs
+    
+    Reference: 
+    - Golden Studio uses 5 springs (4 corners + 1 center)
+    - Typical load: 15-20 kg per spring for 75kg person + 20kg board
+    """
+    x: float                      # X position (normalized 0-1)
+    y: float                      # Y position (normalized 0-1)
+    stiffness_N_per_m: float      # Vertical spring stiffness [N/m]
+    damping_Ns_per_m: float = 0.0 # Damping coefficient [N·s/m]
+    preload_N: float = 0.0        # Preload force [N]
+    
+    @classmethod
+    def default_corner_springs(cls, num_springs: int = 5, total_load_kg: float = 95.0) -> List['SpringSupport']:
+        """
+        Create default spring configuration for vibroacoustic plate.
+        
+        Args:
+            num_springs: Number of springs (typically 5: 4 corners + 1 center)
+            total_load_kg: Total load (person + board weight)
+        
+        Returns:
+            List of SpringSupport objects
+        """
+        springs = []
+        
+        # Calculate stiffness for ~5mm static deflection under load
+        # k = F/δ where F = (total_load/num_springs) * g, δ = 0.005m
+        load_per_spring_N = (total_load_kg / num_springs) * 9.81
+        target_deflection_m = 0.005  # 5mm
+        k = load_per_spring_N / target_deflection_m
+        
+        # Default positions (normalized)
+        if num_springs == 5:
+            positions = [
+                (0.05, 0.10),   # Corner 1 (feet-left)
+                (0.05, 0.90),   # Corner 2 (feet-right)
+                (0.95, 0.10),   # Corner 3 (head-left)
+                (0.95, 0.90),   # Corner 4 (head-right)
+                (0.50, 0.50),   # Center
+            ]
+        elif num_springs == 4:
+            positions = [
+                (0.05, 0.10),   # Corner 1
+                (0.05, 0.90),   # Corner 2
+                (0.95, 0.10),   # Corner 3
+                (0.95, 0.90),   # Corner 4
+            ]
+        else:
+            # Distribute evenly along length
+            positions = [(i / (num_springs - 1) if num_springs > 1 else 0.5, 0.5) 
+                        for i in range(num_springs)]
+        
+        for x, y in positions:
+            springs.append(cls(
+                x=x,
+                y=y,
+                stiffness_N_per_m=k,
+                damping_Ns_per_m=k * 0.01,  # 1% critical damping
+                preload_N=load_per_spring_N,
+            ))
+        
+        return springs
+    
+    def force_at_deflection(self, deflection_m: float) -> float:
+        """Calculate spring reaction force at given deflection."""
+        return self.stiffness_N_per_m * deflection_m + self.preload_N
 
 
 @dataclass
@@ -309,6 +468,121 @@ class StructuralAnalyzer:
             return self._deflection_fem(person_weight_kg, cutouts, resolution)
         else:
             return self._deflection_analytical(person_weight_kg, resolution)
+    
+    def calculate_deflection_with_springs(
+        self,
+        person_weight_kg: float,
+        springs: Optional[List[SpringSupport]] = None,
+        resolution: int = 40,
+    ) -> DeflectionResult:
+        """
+        Calculate deflection with point spring supports instead of simply-supported edges.
+        
+        PHYSICS: The plate is supported by discrete springs, not continuous edge support.
+        This changes the boundary conditions significantly:
+        - Low spring stiffness → quasi-free plate (lower natural frequencies)
+        - High spring stiffness → point supports (localized reactions)
+        
+        Method: Modify Navier solution with spring compliance correction.
+        The springs act as elastic foundation at discrete points.
+        
+        Args:
+            person_weight_kg: Person weight [kg]
+            springs: List of SpringSupport objects (default: 5 springs)
+            resolution: Grid resolution
+            
+        Returns:
+            DeflectionResult with spring-supported deflection field
+        """
+        if springs is None:
+            springs = SpringSupport.default_corner_springs(
+                num_springs=5,
+                total_load_kg=person_weight_kg + 20.0  # Person + board mass ~20kg
+            )
+        
+        a = self.length
+        b = self.width
+        D = self.D
+        
+        # Get body load distribution
+        X, Y, pressure = self.body_load.get_pressure_map(a, b, person_weight_kg, resolution)
+        
+        # Total applied load [N]
+        dx = a / resolution
+        dy = b / resolution
+        total_load_N = np.sum(pressure) * dx * dy
+        
+        # Start with simply-supported Navier solution
+        w = np.zeros_like(X)
+        n_terms = 12
+        
+        for m in range(1, n_terms + 1, 2):
+            for n in range(1, n_terms + 1, 2):
+                sin_mx = np.sin(m * np.pi * X / a)
+                sin_ny = np.sin(n * np.pi * Y / b)
+                q_mn = 4 / (a * b) * np.sum(pressure * sin_mx * sin_ny) * dx * dy
+                denom = D * np.pi**4 * ((m/a)**2 + (n/b)**2)**2
+                w += (q_mn / denom) * sin_mx * sin_ny
+        
+        # Spring compliance effect:
+        # Springs add a baseline vertical displacement (rigid body motion)
+        # and create local stiffening at spring positions
+        
+        # Calculate average deflection at spring positions (simply-supported)
+        spring_deflections_ss = []
+        for spring in springs:
+            ix = min(int(spring.x * (resolution - 1)), resolution - 1)
+            iy = min(int(spring.y * (resolution - 1)), resolution - 1)
+            spring_deflections_ss.append(w[ix, iy])
+        
+        avg_spring_deflection = np.mean(spring_deflections_ss)
+        
+        # With springs, the whole plate can move down uniformly
+        # The spring stiffness determines this "sinking" amount
+        total_spring_stiffness = sum(s.stiffness_N_per_m for s in springs)
+        uniform_sinking = total_load_N / total_spring_stiffness
+        
+        # The deflection relative to supports remains similar to Navier
+        # but scaled by a factor accounting for spring compliance
+        # Higher spring stiffness → closer to simply-supported
+        # Lower spring stiffness → more uniform deflection
+        
+        # Compliance factor: how much the springs "give"
+        plate_stiffness_equiv = D * np.pi**4 / (a**2 * b**2)  # Rough equivalent
+        spring_compliance = plate_stiffness_equiv / total_spring_stiffness
+        
+        # Limit compliance factor to reasonable range
+        compliance_factor = min(1.5, max(0.8, 1.0 + spring_compliance))
+        
+        # Add uniform sinking (springs compress) + scaled bending
+        w_corrected = uniform_sinking + compliance_factor * (w - avg_spring_deflection)
+        
+        # The relative deflection pattern stays similar, just shifted
+        # Reference to minimum (at springs)
+        min_deflection = np.min(w_corrected)
+        w_final = w_corrected - min_deflection  # Zero at supports
+        
+        # Convert to mm
+        w_mm = w_final * 1000
+        
+        # Find maximum
+        max_idx = np.unravel_index(np.argmax(np.abs(w_mm)), w_mm.shape)
+        max_deflection = np.abs(w_mm[max_idx])
+        max_pos = (X[max_idx], Y[max_idx])
+        
+        # Check acceptability
+        is_acceptable = max_deflection <= self.MAX_DEFLECTION_MM
+        safety_factor = self.MAX_DEFLECTION_MM / max(max_deflection, 0.1)
+        
+        return DeflectionResult(
+            max_deflection_mm=max_deflection,
+            deflection_field=w_mm,
+            x_grid=X,
+            y_grid=Y,
+            max_deflection_pos=max_pos,
+            is_acceptable=is_acceptable,
+            safety_factor=safety_factor,
+        )
     
     def _deflection_analytical(
         self,
@@ -654,13 +928,18 @@ class PeninsulaResult:
     """
     Result of peninsula/isolated region detection.
     
-    PARADIGM SHIFT (based on ABH research - Krylov 2014, Deng 2019):
+    PARADIGM SHIFT (based on ABH research - Krylov 2014, Deng 2019, Zhao 2025):
     Isolated regions are NOT necessarily bad! They can:
     1. Focus vibrational energy (like Acoustic Black Holes)
     2. Create local resonators for specific frequency bands
     3. Improve low-frequency response when properly designed
     
     We evaluate BOTH the structural risk AND the acoustic benefit.
+    
+    WAVELENGTH-BASED ANALYSIS (new in v2):
+    - Resonance occurs when peninsula dimension ≈ λ/4 to λ/2
+    - ABH focusing optimal when taper < λ/3 (Krylov 2014)
+    - Target frequencies: 20-200 Hz for vibroacoustic therapy
     """
     has_peninsulas: bool              # True if isolated regions exist
     n_regions: int                    # Number of connected regions (1 = OK)
@@ -671,12 +950,17 @@ class PeninsulaResult:
     # Legacy penalty (for backwards compatibility)
     structural_penalty: float         # Structural risk factor (0 = safe, 1 = risky)
     
-    # NEW: ABH-inspired benefit analysis
+    # ABH-inspired benefit analysis (v2 with wavelength physics)
     abh_benefit: float                # Energy focusing potential [0-1]
     resonator_potential: float        # Local resonance enhancement potential [0-1]
     taper_quality: float              # How well positioned for energy focusing [0-1]
     
-    grid_visualization: np.ndarray    # 2D grid for debugging (labeled regions)
+    # NEW: Wavelength-based analysis (v2)
+    resonant_frequencies: List[float] = field(default_factory=list)  # Estimated resonances [Hz]
+    focusing_bandwidth: Tuple[float, float] = (0.0, 0.0)  # Frequency range for ABH effect [Hz]
+    wave_physics_score: float = 0.0   # Combined wave-based benefit score [0-1]
+    
+    grid_visualization: np.ndarray = field(default=None)  # 2D grid for debugging (labeled regions)
 
 
 def detect_peninsulas(
@@ -817,6 +1101,11 @@ def detect_peninsulas(
     # Small isolated regions are worse than one connected piece
     has_peninsulas = n_regions > 1
     
+    # Default values
+    resonant_frequencies = []
+    focusing_bandwidth = (0.0, 0.0)
+    wave_physics_score = 0.0
+    
     if has_peninsulas:
         # ══════════════════════════════════════════════════════════════════
         # STRUCTURAL RISK (legacy penalty)
@@ -834,52 +1123,137 @@ def detect_peninsulas(
         penalty = min(1.0, penalty)
         
         # ══════════════════════════════════════════════════════════════════
-        # ABH BENEFIT ANALYSIS (NEW! Based on Krylov 2014, Deng 2019)
+        # ABH BENEFIT ANALYSIS v2 (Wavelength-based Physics)
+        # Based on: Krylov 2014, Deng 2019, Zhao 2025, Feurtado 2017
         # 
-        # Acoustic Black Holes show that isolated tapered regions can:
-        # 1. Focus vibrational energy (not trap it)
-        # 2. Create broadband absorption/radiation
-        # 3. Enhance low-frequency response
+        # Key physics:
+        # 1. ABH effect requires λ_bending > peninsula_dimension
+        # 2. Resonance when dimension ≈ λ/4 to λ/2  
+        # 3. Energy focusing at edge/corner positions
+        # 4. Vibroacoustic therapy targets 20-200 Hz
         # ══════════════════════════════════════════════════════════════════
+        
+        # Material properties for wavelength calculation (assume birch plywood)
+        E = 13e9      # Young's modulus [Pa]
+        rho = 680     # Density [kg/m³]
+        h = 0.018     # Typical thickness [m]
+        nu = 0.3      # Poisson's ratio
+        
+        # Bending stiffness
+        D = E * h**3 / (12 * (1 - nu**2))
+        m = rho * h   # Mass per unit area
+        
+        # Bending wave speed: c_b = sqrt(omega) * (D/m)^0.25
+        # λ_b = 2π * (D / (m * ω²))^0.25
+        def bending_wavelength(freq_hz):
+            """Calculate bending wavelength at given frequency."""
+            omega = 2 * np.pi * freq_hz
+            return 2 * np.pi * (D / (m * omega**2))**0.25
+        
+        def fundamental_freq_from_dimension(L_char):
+            """Estimate fundamental frequency for a region of characteristic size L."""
+            # For a clamped/free edge region: f ≈ (π/2) * sqrt(D/m) / L²
+            # Simplified: f ≈ 0.5 * h * sqrt(E/rho) / L² for thin plates
+            return 0.5 * h * np.sqrt(E / rho) / (L_char**2)
         
         abh_benefit = 0.0
         resonator_potential = 0.0
         taper_quality = 0.0
         
         for i, (area, pos) in enumerate(zip(peninsula_areas, peninsula_positions)):
-            # Position score: edge peninsulas are better for ABH
-            # (energy naturally flows to boundaries)
+            # Characteristic dimension (assuming roughly circular)
+            L_char = np.sqrt(area / np.pi) * 2  # Diameter equivalent [m]
+            
+            # ════════════════════════════════════════════════════════════
+            # 1. RESONANCE ANALYSIS
+            # Peninsula resonates when L ≈ λ/4 to λ/2
+            # ════════════════════════════════════════════════════════════
+            f_resonance = fundamental_freq_from_dimension(L_char)
+            resonant_frequencies.append(f_resonance)
+            
+            # Score based on resonance in therapeutic range (20-200 Hz)
+            if 20 <= f_resonance <= 200:
+                resonance_score = 1.0  # Perfect for therapy
+            elif 10 <= f_resonance < 20 or 200 < f_resonance <= 400:
+                resonance_score = 0.5  # Suboptimal but useful
+            else:
+                resonance_score = 0.1  # Out of range
+            
+            # ════════════════════════════════════════════════════════════
+            # 2. POSITION ANALYSIS (ABH edge focusing)
+            # ABH effect strongest at edges/corners (Deng 2019)
+            # Energy naturally flows to boundaries
+            # ════════════════════════════════════════════════════════════
             x_norm = pos[0] / length
             y_norm = pos[1] / width
+            
+            # Distance to nearest edge
             edge_distance = min(x_norm, 1-x_norm, y_norm, 1-y_norm)
-            position_score = 1.0 - edge_distance * 2  # Higher if closer to edge
             
-            # Size score: medium-sized peninsulas are best
-            # Too small = weak, too large = just another plate section
-            plate_area = length * width
-            area_ratio = area / plate_area
-            # Optimal range: 5-20% of plate area
-            if 0.05 <= area_ratio <= 0.20:
-                size_score = 1.0
-            elif area_ratio < 0.05:
-                size_score = area_ratio / 0.05  # Linear ramp up
+            # Corner proximity (corners are best for ABH)
+            corner_distances = [
+                np.sqrt(x_norm**2 + y_norm**2),           # Bottom-left
+                np.sqrt(x_norm**2 + (1-y_norm)**2),       # Top-left
+                np.sqrt((1-x_norm)**2 + y_norm**2),       # Bottom-right
+                np.sqrt((1-x_norm)**2 + (1-y_norm)**2)    # Top-right
+            ]
+            corner_proximity = 1.0 - min(corner_distances) / np.sqrt(2)
+            
+            # Position score: corners > edges > center
+            position_score = corner_proximity * 0.6 + (1.0 - edge_distance * 2) * 0.4
+            position_score = np.clip(position_score, 0, 1)
+            
+            # ════════════════════════════════════════════════════════════
+            # 3. WAVELENGTH-DIMENSION MATCHING
+            # ABH effect requires λ > L (wave "sees" the peninsula)
+            # Ref: Krylov 2014 - optimal when taper < λ/3
+            # ════════════════════════════════════════════════════════════
+            # Check at 50 Hz (mid-therapy range)
+            lambda_50 = bending_wavelength(50)
+            lambda_100 = bending_wavelength(100)
+            
+            # ABH benefit when peninsula dimension < wavelength
+            if L_char < lambda_50 / 3:
+                wavelength_match = 1.0  # Excellent ABH potential
+            elif L_char < lambda_50:
+                wavelength_match = 0.7  # Good ABH potential
+            elif L_char < lambda_100:
+                wavelength_match = 0.4  # Moderate
             else:
-                size_score = max(0, 1.0 - (area_ratio - 0.20) / 0.30)
+                wavelength_match = 0.1  # Poor - peninsula too large
             
-            # ABH benefit: combines position and size
-            # Ref: Deng 2019 - ring-shaped ABH at edges most effective
-            peninsula_abh = position_score * 0.6 + size_score * 0.4
+            # ════════════════════════════════════════════════════════════
+            # 4. COMBINED ABH BENEFIT
+            # ════════════════════════════════════════════════════════════
+            peninsula_abh = (
+                resonance_score * 0.35 +      # Resonance in therapy range
+                position_score * 0.35 +        # Edge/corner position
+                wavelength_match * 0.30        # λ vs dimension match
+            )
             abh_benefit = max(abh_benefit, peninsula_abh)
             
-            # Resonator potential: small isolated regions can resonate
-            # Ref: Zhao 2014 - energy harvesting from ABH
-            if area_ratio < 0.15:
-                resonator_potential = max(resonator_potential, size_score * 0.8)
+            # Resonator potential for small peninsulas
+            plate_area = length * width
+            area_ratio = area / plate_area
+            if area_ratio < 0.15 and 20 <= f_resonance <= 300:
+                resonator_potential = max(resonator_potential, resonance_score * 0.9)
         
-        # Taper quality: how well the connection to main plate
-        # supports energy focusing (narrow connection = better taper)
-        # This is approximated from the isolated fraction
+        # Focusing bandwidth: range where ABH is effective
+        if resonant_frequencies:
+            f_min = min(resonant_frequencies) * 0.5
+            f_max = max(resonant_frequencies) * 2.0
+            focusing_bandwidth = (max(10, f_min), min(500, f_max))
+        
+        # Taper quality: narrow connection = better energy focusing
+        # Approximated from isolated fraction
         taper_quality = min(1.0, isolated_fraction * 5)  # 20% isolated = perfect
+        
+        # Combined wave physics score
+        wave_physics_score = (
+            abh_benefit * 0.4 +
+            resonator_potential * 0.3 +
+            taper_quality * 0.3
+        )
         
     else:
         penalty = 0.0
@@ -897,6 +1271,9 @@ def detect_peninsulas(
         abh_benefit=abh_benefit,
         resonator_potential=resonator_potential,
         taper_quality=taper_quality,
+        resonant_frequencies=resonant_frequencies,
+        focusing_bandwidth=focusing_bandwidth,
+        wave_physics_score=wave_physics_score,
         grid_visualization=labeled_grid
     )
 

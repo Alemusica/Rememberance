@@ -328,6 +328,10 @@ class AudioEngine:
     
     def _audio_callback(self, in_data, frame_count, time_info, status):
         """PyAudio callback"""
+        if status:
+            # Status flags: paInputUnderflow, paInputOverflow, paOutputUnderflow, paOutputOverflow
+            print(f"⚠️ Audio callback status: {status} (frame_count={frame_count})")
+        
         if not self.playing:
             return (None, pyaudio.paComplete)
         
