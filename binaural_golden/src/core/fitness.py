@@ -98,6 +98,110 @@ class ObjectiveWeights:
 
 
 @dataclass
+class ObjectiveVector:
+    """
+    Multi-dimensional fitness for NSGA-II Pareto optimization.
+    
+    Each objective is scored independently for proper trade-off analysis.
+    No weighted combination - let NSGA-II find the Pareto front!
+    
+    RESEARCH BASIS:
+    - Deb et al. 2002: NSGA-II for multi-objective optimization
+    - Bai & Liu 2004: GA for DML exciter placement
+    
+    All scores are 0-1 where 1.0 = optimal.
+    For pymoo minimization: convert via `to_minimize_array()` (negates scores)
+    """
+    # === ZONE FLATNESS (Hz response uniformity) ===
+    spine_flatness: float = 0.0     # Flatness at spine zone (20-200Hz)
+    ear_flatness: float = 0.0       # Flatness at ear positions
+    
+    # === L/R BALANCE (Critical for binaural!) ===
+    ear_lr_uniformity: float = 0.0  # L/R response balance [0-1]
+    
+    # === ENERGY DELIVERY ===
+    spine_energy: float = 0.0       # Energy reaching spine zone
+    ear_energy: float = 0.0         # Energy reaching ear zone
+    
+    # === STRUCTURAL ===
+    mass_score: float = 0.0         # Lower mass = higher score
+    structural_safety: float = 1.0  # Deflection safety [0-1]
+    
+    # === MANUFACTURABILITY ===
+    cnc_simplicity: float = 0.5     # CNC path complexity [0-1]
+    cutout_effectiveness: float = 0.0  # ABH/lutherie score
+    
+    # === LABELS for UI ===
+    labels: Dict[str, str] = field(default_factory=lambda: {
+        'spine_flatness': 'Spine Flatness (20-200Hz)',
+        'ear_flatness': 'Ear Flatness',
+        'ear_lr_uniformity': 'L/R Balance',
+        'spine_energy': 'Spine Energy',
+        'mass_score': 'Mass Efficiency',
+        'structural_safety': 'Structural Safety',
+    })
+    
+    def to_minimize_array(self) -> np.ndarray:
+        """
+        Convert to numpy array for pymoo minimization.
+        
+        Pymoo MINIMIZES objectives, so we negate scores (which we want to MAXIMIZE).
+        Returns array ready for NSGA-II.
+        """
+        return np.array([
+            -self.spine_flatness,      # Maximize → minimize negative
+            -self.ear_flatness,
+            -self.ear_lr_uniformity,
+            -self.spine_energy,
+            -self.mass_score,
+            -self.structural_safety,
+        ])
+    
+    def to_labeled_dict(self) -> Dict[str, float]:
+        """Return dict with human-readable labels and percentages."""
+        return {
+            'Spine Flatness': self.spine_flatness * 100,
+            'Ear Flatness': self.ear_flatness * 100,
+            'L/R Balance': self.ear_lr_uniformity * 100,
+            'Spine Energy': self.spine_energy * 100,
+            'Mass Efficiency': self.mass_score * 100,
+            'Structural Safety': self.structural_safety * 100,
+        }
+    
+    def weighted_total(self, spine_weight: float = 0.7, head_weight: float = 0.3) -> float:
+        """
+        Compute weighted total for backwards compatibility.
+        
+        NOTE: For true multi-objective optimization, use NSGA-II with 
+        to_minimize_array() instead of this scalar combination!
+        
+        Args:
+            spine_weight: Weight for spine-focused objectives
+            head_weight: Weight for head/ear-focused objectives
+        
+        Returns:
+            Weighted scalar fitness [0-1]
+        """
+        spine_combined = (
+            0.5 * self.spine_flatness + 
+            0.3 * self.spine_energy +
+            0.2 * self.structural_safety
+        )
+        
+        head_combined = (
+            0.4 * self.ear_flatness +
+            0.4 * self.ear_lr_uniformity +
+            0.2 * self.ear_energy
+        )
+        
+        return (
+            spine_weight * spine_combined +
+            head_weight * head_combined +
+            0.1 * self.mass_score  # Always consider mass
+        )
+
+
+@dataclass
 class FitnessResult:
     """
     Risultato valutazione fitness.
@@ -401,6 +505,38 @@ class FitnessEvaluator:
         )
         
         return result
+    
+    def evaluate_multi(self, genome: PlateGenome) -> Tuple[FitnessResult, ObjectiveVector]:
+        """
+        Multi-objective evaluation for NSGA-II Pareto optimization.
+        
+        Returns both legacy FitnessResult (for backwards compatibility)
+        and ObjectiveVector (for proper multi-objective optimization).
+        
+        This enables:
+        1. Pareto front exploration without weighted combination
+        2. Trade-off analysis between conflicting objectives
+        3. UI display of labeled individual scores
+        
+        Reference: Deb et al. 2002 "NSGA-II"
+        """
+        # Get standard evaluation
+        result = self.evaluate(genome)
+        
+        # Build ObjectiveVector from individual scores
+        obj_vec = ObjectiveVector(
+            spine_flatness=result.spine_flatness_score,
+            ear_flatness=result.head_flatness_score,
+            ear_lr_uniformity=result.ear_uniformity_score,
+            spine_energy=result.spine_coupling_score,
+            ear_energy=min(result.head_flatness_score, result.ear_uniformity_score),  # Conservative
+            mass_score=result.low_mass_score,
+            structural_safety=result.structural_score,
+            cnc_simplicity=result.manufacturability_score,
+            cutout_effectiveness=result.cutout_tuning_score,
+        )
+        
+        return result, obj_vec
     
     # ─────────────────────────────────────────────────────────────────────────
     # Calcolo Modi Propri (FEM Semplificato)
