@@ -156,6 +156,23 @@ except ImportError:
     pass
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SCORING TEMPLATES - Zone-specific fitness configurations
+# (Action Plan 3.0 Phase 6)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .scoring_templates import (
+        ScoringTemplate, TemplateType, FrequencyBand,
+        FrequencyTarget, ZoneScoringConfig,
+        TemplateRegistry, TemplateAdapter,
+        create_vat_therapy_template, create_binaural_audio_template,
+        create_hybrid_template, create_meditation_template,
+        create_research_template,
+        get_template, list_available_templates, get_default_registry
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PYMOO MULTI-OBJECTIVE OPTIMIZER (NSGA-II/NSGA-III)
 # ══════════════════════════════════════════════════════════════════════════════
 try:
@@ -221,6 +238,14 @@ __all__ = [
     # LTM Distillation (Action Plan 3.0 Phase 5 - knowledge transfer)
     'LTMDistiller', 'DistilledKnowledge', 'DistillationType',
     'ExperienceStatistics', 'create_distiller', 'distill_and_apply',
+    # Scoring Templates (Action Plan 3.0 Phase 6 - zone-specific fitness)
+    'ScoringTemplate', 'TemplateType', 'FrequencyBand',
+    'FrequencyTarget', 'ZoneScoringConfig',
+    'TemplateRegistry', 'TemplateAdapter',
+    'create_vat_therapy_template', 'create_binaural_audio_template',
+    'create_hybrid_template', 'create_meditation_template',
+    'create_research_template',
+    'get_template', 'list_available_templates', 'get_default_registry',
     # Pymoo Multi-Objective Optimizer (NSGA-II/III for ear L/R balance)
     'PymooOptimizer', 'PymooConfig', 'PymooResult', 'PlateOptimizationProblem',
     'compute_ear_uniformity_from_result', 'PYMOO_AVAILABLE',
