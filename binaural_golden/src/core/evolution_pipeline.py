@@ -542,33 +542,47 @@ class EvolutionPipeline:
         """
         Apply ExciterGene staged activation (Phase 2).
         
-        Early generations: Freeze position, only mutate emission
-        Later generations: Allow full position + emission mutation
+        Curriculum learning approach:
+        - SEED phase (early): Position genes active, emission frozen
+        - BLOOM phase (after curriculum_bloom_generation): All genes active
+        - FREEZE phase: Locked for CNC (set externally when design finalized)
+        
+        References:
+        - GenePhase enum: SEED, BLOOM, FREEZE (analysis_config.py)
+        - curriculum_bloom_generation: default 50 generations
         """
         if not hasattr(genome, 'exciters') or not genome.exciters:
             return genome
         
         try:
-            from .exciter_gene import GenePhase
-            from .analysis_config import get_default_config
+            from .analysis_config import GenePhase, get_default_config
             
             config = get_default_config()
             
-            # Check phase based on generation
-            if generation < config.gene_activation.position_freeze_generations:
-                phase = GenePhase.POSITION_FROZEN
-                self.state.gene_activation_timeline[generation] = "POSITION_FROZEN"
+            # Curriculum learning: SEED → BLOOM transition
+            # Early generations: only position genes (find good locations)
+            # Later generations: activate emission genes (fine-tune response)
+            if generation < config.gene_activation.curriculum_bloom_generation:
+                phase = GenePhase.SEED
+                self.state.gene_activation_timeline[generation] = "SEED"
             else:
-                phase = GenePhase.FULL
-                self.state.gene_activation_timeline[generation] = "FULL"
+                phase = GenePhase.BLOOM
+                self.state.gene_activation_timeline[generation] = "BLOOM"
             
-            # Apply phase to exciters
+            # Apply phase to exciters with ExciterGene
             for exc in genome.exciters:
                 if hasattr(exc, 'set_phase'):
                     exc.set_phase(phase)
+                elif hasattr(exc, 'gene') and hasattr(exc.gene, 'phase'):
+                    # ExciterGene wrapper
+                    exc.gene.phase = phase
                     
+        except ImportError:
+            logger.debug("ExciterGene module not available, skipping phase application")
+        except AttributeError as e:
+            logger.debug(f"ExciterGene attribute error: {e}")
         except Exception as e:
-            logger.debug(f"ExciterGene application error: {e}")
+            logger.warning(f"Unexpected ExciterGene error: {e}")
         
         return genome
     

@@ -371,12 +371,23 @@ class TestExciterGeneIntegration:
         mock_genome = Mock()
         mock_genome.exciters = [mock_exciter]
         
-        # Apply at early generation (should freeze positions)
+        # Apply at early generation (SEED phase - curriculum learning)
         pipeline.apply_exciter_genes(mock_genome, generation=0)
         
-        # Timeline might be tracked if ExciterGene is available
-        # This is conditional based on imports
-        # Just verify no crash occurred
+        # Verify timeline tracking works
+        # Generation 0 should be SEED (before curriculum_bloom_generation=50)
+        assert 0 in pipeline.state.gene_activation_timeline, \
+            "Timeline should track generation 0"
+        assert pipeline.state.gene_activation_timeline[0] == "SEED", \
+            f"Early generation should be SEED, got {pipeline.state.gene_activation_timeline.get(0)}"
+        
+        # Apply at late generation (BLOOM phase)
+        pipeline.apply_exciter_genes(mock_genome, generation=100)
+        
+        assert 100 in pipeline.state.gene_activation_timeline, \
+            "Timeline should track generation 100"
+        assert pipeline.state.gene_activation_timeline[100] == "BLOOM", \
+            f"Late generation should be BLOOM, got {pipeline.state.gene_activation_timeline.get(100)}"
     
     def test_no_crash_without_exciters(self):
         """Test no crash when genome has no exciters."""
