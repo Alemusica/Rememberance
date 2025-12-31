@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "surrealdb-knowledge": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "-m",
+        "src.utils.surrealdb_mcp_server"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    }
+  }
+}
