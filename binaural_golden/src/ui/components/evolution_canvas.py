@@ -393,6 +393,11 @@ class EvolutionCanvas(tk.Canvas):
         if self._genome and hasattr(self._genome, 'exciters') and self._genome.exciters:
             for exciter in self._genome.exciters:
                 self._draw_exciter(x0, y0, x1, y1, exciter)
+        
+        # Draw spring supports (isolatori pavimento)
+        if self._genome and hasattr(self._genome, 'spring_supports') and self._genome.spring_supports:
+            for spring in self._genome.spring_supports:
+                self._draw_spring_support(x0, y0, x1, y1, spring)
     
     def _draw_plate_shape(
         self,
@@ -1245,6 +1250,60 @@ class EvolutionCanvas(tk.Canvas):
             fill=STYLE.TEXT_MUTED, font=('SF Pro', 7)
         )
     
+    def _draw_spring_support(self, x0: float, y0: float, x1: float, y1: float, spring):
+        """
+        Draw a spring support (isolatore pavimento).
+        
+        Springs are rendered as coil symbols at the edge of the plate.
+        
+        COORDINATE MAPPING (same as exciters):
+        - spring.x = lateral (0=left, 1=right body) → canvas Y
+        - spring.y = longitudinal (0=feet, 1=head) → canvas X
+        """
+        plate_w = x1 - x0  # Canvas width = plate LENGTH
+        plate_h = y1 - y0  # Canvas height = plate WIDTH
+        
+        # Coordinate mapping (same convention as exciters)
+        sp_cx = x0 + spring.y * plate_w  # spring.y → canvas X
+        sp_cy = y0 + (1 - spring.x) * plate_h  # spring.x → canvas Y (inverted)
+        
+        # Spring visualization: coil icon
+        coil_radius = 8  # pixels
+        coil_color = '#666666'  # Gray for mechanical parts
+        highlight = '#888888'
+        
+        # Outer circle (mounting plate)
+        self.create_oval(
+            sp_cx - coil_radius - 3, sp_cy - coil_radius - 3,
+            sp_cx + coil_radius + 3, sp_cy + coil_radius + 3,
+            fill=STYLE.BG_MEDIUM, outline=coil_color, width=1
+        )
+        
+        # Inner coil representation (concentric circles)
+        self.create_oval(
+            sp_cx - coil_radius, sp_cy - coil_radius,
+            sp_cx + coil_radius, sp_cy + coil_radius,
+            fill='', outline=highlight, width=2
+        )
+        
+        # Center dot
+        self.create_oval(
+            sp_cx - 2, sp_cy - 2,
+            sp_cx + 2, sp_cy + 2,
+            fill=coil_color, outline=''
+        )
+        
+        # Coil "spring" lines
+        for angle in [0, 90, 180, 270]:
+            rad = math.radians(angle)
+            inner_r = 3
+            outer_r = coil_radius - 1
+            self.create_line(
+                sp_cx + inner_r * math.cos(rad), sp_cy + inner_r * math.sin(rad),
+                sp_cx + outer_r * math.cos(rad), sp_cy + outer_r * math.sin(rad),
+                fill=highlight, width=1
+            )
+    
     def _draw_human_silhouette(self, cw: int, ch: int):
         """Draw human body overlay, adapting to plate shape."""
         x0, y0, x1, y1, scale = self._get_plate_coords(cw, ch)
@@ -2028,17 +2087,17 @@ class FitnessRadarChart(tk.Canvas):
         }
         
         self._labels = {
-            'flatness': 'Flatness',
+            'flatness': 'Energy',
             'spine': 'Spine',
-            'mass': 'Mass',
-            'edge': 'Edge',
+            'mass': 'Flatness',
+            'edge': 'Mass',
         }
         
         self._colors = {
-            'flatness': '#FF6B6B',
-            'spine': '#4ECDC4',
-            'mass': '#FFE66D',
-            'edge': '#95E1D3',
+            'flatness': '#4ECDC4',  # Cyan for Energy
+            'spine': '#FFE66D',    # Yellow for Spine  
+            'mass': '#95E1D3',     # Green for Flatness
+            'edge': '#FF6B6B',     # Red for Mass
         }
         
         self._draw()
@@ -2103,15 +2162,37 @@ class FitnessRadarChart(tk.Canvas):
                 fill=STYLE.BG_HIGHLIGHT, width=1
             )
             
-            # Label
-            label_r = radius + 15
+            # Label with score percentage
+            label_r = radius + 20
+            score_pct = int(self._scores[key] * 100)
+            label_text = f"{score_pct}%"
+            
+            # Position label
+            lx = cx + label_r * math.cos(angle)
+            ly = cy + label_r * math.sin(angle)
+            
+            # Draw score percentage
             self.create_text(
-                cx + label_r * math.cos(angle),
-                cy + label_r * math.sin(angle),
-                text=self._labels[key],
+                lx, ly,
+                text=label_text,
                 fill=self._colors[key],
-                font=(STYLE.FONT_MAIN, 8, 'bold')
+                font=(STYLE.FONT_MAIN, 9, 'bold')
             )
+            
+            # Draw axis name below/beside the percentage  
+            name_offset = 12
+            if angle > -0.1 and angle < 0.1:  # Top
+                self.create_text(lx, ly - name_offset, text=self._labels[key],
+                                fill=self._colors[key], font=(STYLE.FONT_MAIN, 7))
+            elif abs(angle - math.pi) < 0.1:  # Bottom
+                self.create_text(lx, ly + name_offset, text=self._labels[key],
+                                fill=self._colors[key], font=(STYLE.FONT_MAIN, 7))
+            elif angle > 0:  # Right side
+                self.create_text(lx + name_offset, ly, text=self._labels[key],
+                                fill=self._colors[key], font=(STYLE.FONT_MAIN, 7), anchor='w')
+            else:  # Left side
+                self.create_text(lx - name_offset, ly, text=self._labels[key],
+                                fill=self._colors[key], font=(STYLE.FONT_MAIN, 7), anchor='e')
         
         # Draw data polygon
         data_points = []
