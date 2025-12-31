@@ -81,7 +81,7 @@ class PlatePhysicsAdapter(PhysicsEngine[PlateGenome, PlatePhysicsResult]):
     def __init__(
         self,
         n_modes: int = 20,
-        grid_resolution: int = 50,
+        grid_resolution: int = None,  # Auto-computed if None
         material_E: float = 2.5e9,      # Young's modulus (Pa)
         material_rho: float = 1200,      # Density (kg/m³)
         material_nu: float = 0.35,       # Poisson's ratio
@@ -92,7 +92,7 @@ class PlatePhysicsAdapter(PhysicsEngine[PlateGenome, PlatePhysicsResult]):
         
         Args:
             n_modes: Number of modes to compute
-            grid_resolution: Grid size for mode shapes
+            grid_resolution: Grid size for mode shapes (auto if None)
             material_E: Young's modulus in Pa
             material_rho: Density in kg/m³
             material_nu: Poisson's ratio
@@ -152,13 +152,29 @@ class PlatePhysicsAdapter(PhysicsEngine[PlateGenome, PlatePhysicsResult]):
         
         # Compute mode shapes using mode_shape_grid
         try:
+            # ═══════════════════════════════════════════════════════════════════
+            # ADAPTIVE RESOLUTION: Grid spacing ≤ 40mm for cutout accuracy
+            # ═══════════════════════════════════════════════════════════════════
+            target_spacing_mm = 40.0
+            if self.grid_resolution is None:
+                # Auto-compute based on plate size
+                adaptive_nx = max(21, int(np.ceil(length_mm / target_spacing_mm)))
+                adaptive_ny = max(13, int(np.ceil(width_mm / target_spacing_mm)))
+                # Use max dimension, ensure odd for symmetry
+                resolution = max(adaptive_nx, adaptive_ny)
+                if resolution % 2 == 0:
+                    resolution += 1
+                resolution = min(resolution, 101)  # Cap for performance
+            else:
+                resolution = self.grid_resolution
+            
             mode_shapes = []
             for m in range(1, 4):
                 for n in range(1, 4):
                     X, Y, Z = mode_shape_grid(
                         m=m, n=n,
                         L=plate_length, W=plate_width,
-                        resolution=self.grid_resolution,
+                        resolution=resolution,
                     )
                     mode_shapes.append(Z)  # Just the amplitude grid
             mode_shapes = np.array(mode_shapes[:min(len(mode_shapes), self.n_modes)])

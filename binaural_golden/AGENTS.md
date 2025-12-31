@@ -135,3 +135,81 @@ Tests cover:
 - Spine zone avoidance
 - Symmetry detection
 - Multi-mode prioritization
+
+### Unified Optimizer (Strategy Pattern)
+
+**Files**:
+- `src/core/unified_optimizer.py` - Strategy pattern framework (~930 lines)
+- `src/core/plate_unified.py` - Plate-specific implementations (~560 lines)
+
+Centralizes 4 scattered optimizer files into one unified framework:
+
+```python
+from src.core.person import Person
+from src.core.unified_optimizer import OptimizationStrategy
+from src.core.plate_unified import create_plate_optimization_system
+
+person = Person(height_m=1.80, weight_kg=75)
+optimizer, config = create_plate_optimization_system(
+    person,
+    strategy=OptimizationStrategy.GENETIC,  # or NSGA2, SIMP, HYBRID, AUTO
+    use_memory=True
+)
+result = optimizer.optimize(config)
+print(f"Best fitness: {result.best_fitness:.4f}")
+```
+
+**Available Strategies**:
+- `GENETIC` - Custom GA with tournament selection
+- `NSGA2/NSGA3` - Multi-objective Pareto (pymoo)
+- `SIMP` - Solid Isotropic Material Penalization
+- `HYBRID` - Combines multiple approaches
+- `AUTO` - Automatic selection based on problem
+
+**Features**:
+- Protocol-based interfaces for type safety
+- Plugin registry for extensibility
+- Adaptive modal grid resolution (≤40mm spacing)
+- Memory system integration
+
+### Files to Deprecate
+
+These files are being unified into `unified_optimizer.py`:
+- `plate_optimizer.py` (1165 lines)
+- `pymoo_optimizer.py` (750 lines)
+- `evolutionary_optimizer.py` (840 lines)
+- `iterative_optimizer.py` (1012 lines)
+
+## Architecture Overview
+
+```
+src/core/
+├── OPTIMIZATION LAYER
+│   ├── unified_optimizer.py    # Strategy pattern (NEW)
+│   ├── plate_unified.py        # Plate implementations (NEW)
+│   ├── agnostic_evolution.py   # Abstract interfaces (NEW)
+│   └── plate_adapters.py       # Plate adapters (NEW)
+│
+├── PHYSICS LAYER
+│   ├── plate_physics.py        # Modal analysis
+│   ├── plate_fem.py           # Finite element
+│   ├── jax_plate_fem.py       # JAX-accelerated FEM
+│   └── materials.py           # Material properties
+│
+├── FITNESS LAYER
+│   ├── fitness.py             # Main fitness evaluator
+│   ├── modal_guidance.py      # Mode-guided cutouts
+│   └── structural_analysis.py # Peninsula/ABH detection
+│
+├── GENOME LAYER
+│   ├── plate_genome.py        # PlateGenome dataclass
+│   └── freeform_cutout.py     # Topology cutouts (NEW)
+│
+├── MEMORY LAYER
+│   └── evolution_memory.py    # STM + LTM (NEW)
+│
+└── EXPORT LAYER
+    ├── stl_export.py          # 3D STL files
+    ├── virtual_cnc.py         # G-code generation
+    └── dsp_export.py          # DSP configurations
+```

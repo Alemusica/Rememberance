@@ -165,14 +165,27 @@ class PlatePhysicsEngine:
                 max_freq_hz=2000.0,
             )
             
-            # Generate mode shapes on grid
+            # ═══════════════════════════════════════════════════════════════════
+            # ADAPTIVE RESOLUTION for mode shapes
+            # Grid spacing must be ≤ 40mm for accurate cutout effect prediction
+            # ═══════════════════════════════════════════════════════════════════
+            target_spacing_mm = 40.0
+            adaptive_nx = max(21, int(np.ceil(length_mm / target_spacing_mm)))
+            adaptive_ny = max(13, int(np.ceil(width_mm / target_spacing_mm)))
+            # Ensure odd for symmetry
+            adaptive_resolution = max(adaptive_nx, adaptive_ny)
+            if adaptive_resolution % 2 == 0:
+                adaptive_resolution += 1
+            adaptive_resolution = min(adaptive_resolution, 101)  # Cap for performance
+            
+            # Generate mode shapes on adaptive grid
             shapes = []
             for mode in modes:
                 X, Y, Z = mode_shape_grid(
                     m=mode.m, n=mode.n,
                     L=genome.length,
                     W=genome.width,
-                    resolution=50,
+                    resolution=adaptive_resolution,
                 )
                 shapes.append(Z)
             

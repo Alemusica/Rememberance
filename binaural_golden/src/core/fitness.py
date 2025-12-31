@@ -606,10 +606,27 @@ class FitnessEvaluator:
         # Net effect: frequency shift depends on cutout position
         cutout_frequency_shift = 1.0 - 0.3 * cutout_area_fraction
         
-        # Prendi primi n_modes
-        # IMPORTANT: Use ODD grid sizes to ensure exact symmetry around y=0.5
-        # nx=21 and ny=13 give exact center points at x=0.5 and y=0.5
-        nx, ny = 21, 13  # Odd numbers for symmetric grids
+        # ═══════════════════════════════════════════════════════════════════════
+        # ADAPTIVE RESOLUTION - Grid spacing must be < typical cutout distance
+        # Reference: Schleske (2002) - resolution finer than feature size
+        # Target: grid spacing ≤ 40mm for accurate cutout effect prediction
+        # ═══════════════════════════════════════════════════════════════════════
+        target_spacing_mm = 40.0  # mm - finer than typical 50mm cutout
+        L_mm = L * 1000  # Convert to mm
+        W_mm = W * 1000
+        
+        # Calculate required resolution (ensure ODD for symmetric grids)
+        nx_min = int(np.ceil(L_mm / target_spacing_mm))
+        ny_min = int(np.ceil(W_mm / target_spacing_mm))
+        
+        # Ensure odd numbers for exact center point at 0.5
+        nx = nx_min + 1 if nx_min % 2 == 0 else nx_min
+        ny = ny_min + 1 if ny_min % 2 == 0 else ny_min
+        
+        # Clamp to reasonable range (performance vs accuracy tradeoff)
+        nx = max(21, min(nx, 101))  # 21-101 points
+        ny = max(13, min(ny, 51))   # 13-51 points
+        
         x = np.linspace(0, 1, nx)
         y = np.linspace(0, 1, ny)
         X, Y = np.meshgrid(x, y, indexing='ij')
