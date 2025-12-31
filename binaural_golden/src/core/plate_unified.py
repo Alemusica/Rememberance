@@ -36,6 +36,7 @@ from .person import Person
 from .plate_genome import PlateGenome, ContourType, ExciterPosition
 from .plate_physics import calculate_plate_modes, mode_shape_grid
 from .fitness import FitnessEvaluator, FitnessResult, ObjectiveWeights, ZoneWeights
+from .analysis_config import get_target_spacing_mm, get_default_config
 
 # Try to import adapters
 try:
@@ -167,9 +168,9 @@ class PlatePhysicsEngine:
             
             # ═══════════════════════════════════════════════════════════════════
             # ADAPTIVE RESOLUTION for mode shapes
-            # Grid spacing must be ≤ 40mm for accurate cutout effect prediction
+            # Uses centralized config from analysis_config.py
             # ═══════════════════════════════════════════════════════════════════
-            target_spacing_mm = 40.0
+            target_spacing_mm = get_target_spacing_mm(genome.length, genome.width)
             adaptive_nx = max(21, int(np.ceil(length_mm / target_spacing_mm)))
             adaptive_ny = max(13, int(np.ceil(width_mm / target_spacing_mm)))
             # Ensure odd for symmetry

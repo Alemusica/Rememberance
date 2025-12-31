@@ -39,6 +39,7 @@ from .fitness import FitnessEvaluator, FitnessResult, ObjectiveVector, Objective
 from .person import Person
 from .body_zones import BodyZone
 from .materials import MATERIALS
+from .analysis_config import get_target_spacing_mm, get_default_config
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +154,9 @@ class PlatePhysicsAdapter(PhysicsEngine[PlateGenome, PlatePhysicsResult]):
         # Compute mode shapes using mode_shape_grid
         try:
             # ═══════════════════════════════════════════════════════════════════
-            # ADAPTIVE RESOLUTION: Grid spacing ≤ 40mm for cutout accuracy
+            # ADAPTIVE RESOLUTION: Uses centralized config from analysis_config.py
             # ═══════════════════════════════════════════════════════════════════
-            target_spacing_mm = 40.0
+            target_spacing_mm = get_target_spacing_mm(plate_length, plate_width)
             if self.grid_resolution is None:
                 # Auto-compute based on plate size
                 adaptive_nx = max(21, int(np.ceil(length_mm / target_spacing_mm)))

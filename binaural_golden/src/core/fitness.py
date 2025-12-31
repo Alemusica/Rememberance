@@ -32,6 +32,7 @@ from .structural_analysis import (
     StructuralAnalyzer, DeflectionResult, StressResult,
     detect_peninsulas, PeninsulaResult
 )
+from .analysis_config import get_target_spacing_mm, get_default_config
 
 # Evolution logging (physics-driven)
 from .evolution_logger import (
@@ -609,9 +610,9 @@ class FitnessEvaluator:
         # ═══════════════════════════════════════════════════════════════════════
         # ADAPTIVE RESOLUTION - Grid spacing must be < typical cutout distance
         # Reference: Schleske (2002) - resolution finer than feature size
-        # Target: grid spacing ≤ 40mm for accurate cutout effect prediction
+        # Uses centralized config from analysis_config.py
         # ═══════════════════════════════════════════════════════════════════════
-        target_spacing_mm = 40.0  # mm - finer than typical 50mm cutout
+        target_spacing_mm = get_target_spacing_mm(L, W)  # Adaptive based on plate size
         L_mm = L * 1000  # Convert to mm
         W_mm = W * 1000
         

@@ -79,6 +79,58 @@ except ImportError:
     pass
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ANALYSIS CONFIG - Centralized parameters (Action Plan 3.0 Phase 0)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .analysis_config import (
+        AnalysisConfig, ModalAnalysisConfig, GeneActivationConfig,
+        EvolutionConfig, ObserverConfig, EmissionBounds,
+        GenePhase, ActivationTrigger,
+        get_default_config, set_default_config, get_target_spacing_mm,
+        ConfigProvider
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EXCITER GENE - Staged activation (Action Plan 3.0 Phase 2)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .exciter_gene import (
+        ExciterGene, EmissionGenes,
+        upgrade_exciters_to_genes, activate_all_emission, freeze_all_positions,
+        calculate_position_sigma, get_emission_summary
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHYSICS RULES ENGINE - Hybrid rules (Action Plan 3.0 Phase 3)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .physics_rules import (
+        PhysicsRulesEngine, PhysicsRule, LearnedRule,
+        RuleCategory, RuleDomain, RuleCondition, RuleSuggestion, RuleEvaluationResult,
+        ExciterAtAntinodeRule, ExciterAvoidNodeRule, PhaseSteeringRule,
+        EdgeDistanceRule, CutoutAntinodeTuningRule,
+        create_rule_context, create_physics_engine
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POKAYOKE OBSERVER - Intelligent monitoring with PAUSE + ASK USER
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .pokayoke_observer import (
+        PokayokeObserver, AnomalyType, UserAction, AnomalyContext, UserDecision,
+        ObserverState, UserInteractionHandler, HeadlessHandler, CLIHandler,
+        create_observer
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PYMOO MULTI-OBJECTIVE OPTIMIZER (NSGA-II/NSGA-III)
 # ══════════════════════════════════════════════════════════════════════════════
 try:
@@ -119,6 +171,24 @@ __all__ = [
     # DML Frequency Model (from Harris 2010, Aures 2001, Bank 2010)
     'DMLFrequencyModel', 'DMLResponse', 'ModeShape', 'ExciterCoupling',
     'ExciterStrategy', 'create_dml_model_for_genome', 'analyze_exciter_placement',
+    # Analysis Config (Action Plan 3.0 - centralized parameters)
+    'AnalysisConfig', 'ModalAnalysisConfig', 'GeneActivationConfig',
+    'EvolutionConfig', 'ObserverConfig', 'EmissionBounds',
+    'GenePhase', 'ActivationTrigger',
+    'get_default_config', 'set_default_config', 'get_target_spacing_mm',
+    'ConfigProvider',
+    # ExciterGene (Action Plan 3.0 Phase 2 - staged gene activation)
+    'ExciterGene', 'EmissionGenes',
+    'upgrade_exciters_to_genes', 'activate_all_emission', 'freeze_all_positions',
+    'calculate_position_sigma', 'get_emission_summary',
+    # Physics Rules Engine (Action Plan 3.0 Phase 3 - hybrid rules)
+    'PhysicsRulesEngine', 'PhysicsRule', 'LearnedRule',
+    'RuleCategory', 'RuleDomain', 'RuleCondition', 'RuleSuggestion', 'RuleEvaluationResult',
+    'create_rule_context', 'create_physics_engine',
+    # PokayokeObserver (Action Plan 3.0 Phase 1 - PAUSE + ASK USER)
+    'PokayokeObserver', 'AnomalyType', 'UserAction', 'AnomalyContext', 'UserDecision',
+    'ObserverState', 'UserInteractionHandler', 'HeadlessHandler', 'CLIHandler',
+    'create_observer',
     # Pymoo Multi-Objective Optimizer (NSGA-II/III for ear L/R balance)
     'PymooOptimizer', 'PymooConfig', 'PymooResult', 'PlateOptimizationProblem',
     'compute_ear_uniformity_from_result', 'PYMOO_AVAILABLE',
