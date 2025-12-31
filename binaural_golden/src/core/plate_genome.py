@@ -1632,12 +1632,16 @@ class PlateGenome:
         existing_cutouts: List['CutoutGene'],
     ) -> Optional[Dict]:
         """
-        Get physics-guided cutout parameters using modal analysis.
+        Get physics-guided cutout parameters using modal analysis and ABH theory.
         
         PHYSICS PRINCIPLE (Schleske 2002, Fletcher & Rossing 1998):
         - Cutout at ANTINODE → maximum frequency shift
         - Cutout at NODE → minimal effect on that mode
         - F-holes in violins are positioned to tune specific modes
+        
+        ABH PRINCIPLE (Krylov 2014, Deng 2019):
+        - Edge/corner cutouts can focus acoustic energy
+        - Tapered profiles create "black hole" effect
         
         Args:
             existing_cutouts: List of existing CutoutGene objects
@@ -1646,6 +1650,41 @@ class PlateGenome:
             Dict with cutout parameters, or None if no good position found
         """
         try:
+            # 70% use standard modal guidance, 30% use ABH optimizer
+            use_abh = np.random.random() < 0.30
+            
+            if use_abh:
+                # Try ABH-based placement (Krylov 2014)
+                from .cutout_placement import CutoutPlacementOptimizer, CutoutPurpose as ABHPurpose
+                
+                optimizer = CutoutPlacementOptimizer(
+                    length=self.length,
+                    width=self.width,
+                    thickness=self.thickness_base,
+                )
+                
+                # Get ABH suggestion for edge energy focusing
+                suggestions = optimizer.suggest_for_abh_focusing(
+                    target_zone="spine",  # Focus on spine zone
+                    n_suggestions=1,
+                )
+                
+                if suggestions:
+                    suggestion = suggestions[0]
+                    return {
+                        "x": suggestion.x,
+                        "y": suggestion.y,
+                        "width": suggestion.width,
+                        "height": suggestion.height,
+                        "rotation": 0.0,
+                        "shape": suggestion.shape,
+                        "corner_radius": 0.3,
+                        "aspect_bias": suggestion.width / max(suggestion.height, 0.01),
+                        "purpose": "abh_focus",
+                        "confidence": suggestion.confidence,
+                    }
+            
+            # Standard modal guidance (Schleske 2002)
             from .modal_guidance import ModalAnalyzer, create_physics_guided_cutout
             
             # Create analyzer for current plate dimensions
