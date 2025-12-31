@@ -549,6 +549,44 @@ class PymooResult:
         
         return self.pareto_genomes[knee_idx], self.pareto_fitness[knee_idx]
     
+    def get_best_balanced_index(self) -> int:
+        """
+        Get index of best balanced solution (knee point).
+        
+        Returns:
+            Index into pareto_genomes/pareto_fitness arrays
+        """
+        if len(self.pareto_objectives) <= 1:
+            return 0
+        
+        # Use same knee-point algorithm
+        obj = self.pareto_objectives
+        obj_min = obj.min(axis=0)
+        obj_max = obj.max(axis=0)
+        obj_range = obj_max - obj_min
+        obj_range[obj_range < 1e-10] = 1.0
+        obj_norm = (obj - obj_min) / obj_range
+        
+        utopia = np.ones(3)
+        nadir = np.zeros(3)
+        line_dir = utopia - nadir
+        line_dir = line_dir / np.linalg.norm(line_dir)
+        
+        max_dist = -1
+        knee_idx = 0
+        
+        for i, point in enumerate(obj_norm):
+            v = point - nadir
+            proj = np.dot(v, line_dir) * line_dir
+            perp = v - proj
+            dist = np.linalg.norm(perp)
+            
+            if dist > max_dist:
+                max_dist = dist
+                knee_idx = i
+        
+        return knee_idx
+    
     def summary(self) -> str:
         """Generate summary of optimization results."""
         lines = [

@@ -30,6 +30,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Evolution logging (physics-driven)
+from .evolution_logger import (
+    log_cutout_placement,
+    log_physics_decision,
+)
+evo_logger = logging.getLogger("golden_studio.evolution")
+
 # Physical constants
 PHI = (1 + np.sqrt(5)) / 2  # Golden ratio
 
@@ -425,6 +432,36 @@ class ModalAnalyzer:
         freq_shift = rr_result["delta_f_hz"]
         confidence = rr_result["confidence"] * best_amplitude
         
+        # ════════════════════════════════════════════════════════════════════
+        # LOG PHYSICS-GUIDED CUTOUT PLACEMENT
+        # ════════════════════════════════════════════════════════════════════
+        log_cutout_placement(
+            cutout_index=len(avoid) + 1,  # Index based on existing cutouts
+            x=best_pos[0],
+            y=best_pos[1],
+            shape=shape,
+            purpose=purpose.value,
+            target_mode=mode.mode_id,
+            expected_freq_shift=freq_shift,
+            confidence=confidence,
+            physics_guided=True,
+            logger=evo_logger
+        )
+        
+        log_physics_decision(
+            decision=f"Place cutout at ({best_pos[0]:.2f}, {best_pos[1]:.2f})",
+            reason=f"Mode {mode.mode_id} antinode with amplitude {best_amplitude:.2f}. "
+                   f"Rayleigh-Ritz predicts Δf={freq_shift:+.1f}Hz",
+            parameters={
+                "mode": mode.mode_id,
+                "amplitude": best_amplitude,
+                "delta_mass_effect": rr_result.get("mass_effect", 0),
+                "delta_stiffness_effect": rr_result.get("stiffness_effect", 0),
+            },
+            reference="Schleske 2002, Fletcher & Rossing 1998",
+            logger=evo_logger
+        )
+        
         return CutoutSuggestion(
             x=best_pos[0],
             y=best_pos[1],
@@ -562,17 +599,38 @@ def create_physics_guided_cutout(
     analyzer: ModalAnalyzer,
     purpose: CutoutPurpose = CutoutPurpose.FLATTEN_RESPONSE,
     existing_cutouts: Optional[List] = None,
+    n_cutout: int = 1,  # Which cutout number (for variety)
 ) -> Optional[dict]:
     """
-    Create a physics-guided cutout for a genome.
+    Create a physics-guided cutout with INTELLIGENT VARIATION.
     
-    This is the main interface for the evolutionary optimizer.
+    PHYSICS-BASED DECISION MAKING:
+    
+    1. POSITION varies based on:
+       - Target mode antinodes (different modes = different positions)
+       - Existing cutouts (spread them out, avoid clustering)
+       - Body zones (spine vs head vs feet)
+    
+    2. SIZE varies based on:
+       - Mode wavelength at that position (λ/4 to λ/2 effective)
+       - Desired frequency shift magnitude
+       - Structural constraints (not too big near edges)
+    
+    3. SHAPE varies based on:
+       - Local mode curvature direction (ellipse aligned with curvature)
+       - Frequency shift direction (leaf/vesica for asymmetric tuning)
+       - Zone purpose (f_hole for resonance, slot for bass)
+    
+    4. ROTATION varies based on:
+       - Mode nodal line direction (perpendicular for max effect)
+       - Symmetry requirements (mirrored pairs)
     
     Args:
         genome: PlateGenome to add cutout to
         analyzer: ModalAnalyzer with computed modes
         purpose: Goal of the cutout
         existing_cutouts: List of existing CutoutGene objects
+        n_cutout: Which cutout number (1, 2, 3...) for variety
     
     Returns:
         Dict with cutout parameters, or None if no good position found
@@ -583,28 +641,408 @@ def create_physics_guided_cutout(
         for c in existing_cutouts:
             avoid.append((c.x, c.y))
     
-    # Get suggestions for flattening
-    suggestions = analyzer.suggest_cutouts_for_flatness(
-        freq_range=(20.0, 200.0),
-        max_cutouts=1,
-        existing_cutouts=avoid,
-    )
+    # Ensure modes are computed
+    if not analyzer._modes:
+        analyzer.compute_modes(n_modes=15)
     
-    if not suggestions:
+    modes = analyzer._modes
+    if not modes:
         return None
     
-    s = suggestions[0]
+    # ════════════════════════════════════════════════════════════════════════
+    # 1. SELECT TARGET MODE based on cutout number (VARIETY!)
+    # First cutout targets mode 1, second targets mode 2, etc.
+    # ════════════════════════════════════════════════════════════════════════
+    target_mode_idx = (n_cutout - 1) % len(modes)
+    target_mode = modes[target_mode_idx]
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 2. FIND BEST ANTINODE for this mode (avoiding existing cutouts)
+    # ════════════════════════════════════════════════════════════════════════
+    antinodes = target_mode.antinodes
+    
+    if not antinodes:
+        # Fallback: find max amplitude location
+        shape = target_mode.mode_shape
+        max_idx = np.unravel_index(np.argmax(np.abs(shape)), shape.shape)
+        x = analyzer.x_norm[max_idx[0]]
+        y = analyzer.y_norm[max_idx[1]]
+        antinodes = [(x, y)]
+    
+    # Score antinodes - prefer ones away from existing cutouts
+    best_antinode = None
+    best_score = -np.inf
+    
+    for ax, ay in antinodes:
+        # Distance to nearest existing cutout
+        min_dist = 1.0
+        for ex, ey in avoid:
+            dist = np.sqrt((ax - ex)**2 + (ay - ey)**2)
+            min_dist = min(min_dist, dist)
+        
+        # Distance from edge (prefer not too close)
+        edge_dist = min(ax, 1-ax, ay, 1-ay)
+        
+        # Mode amplitude at this point
+        amp = abs(analyzer.get_mode_amplitude_at(ax, ay, target_mode_idx))
+        
+        # Combined score
+        score = amp * min_dist * edge_dist
+        
+        if score > best_score:
+            best_score = score
+            best_antinode = (ax, ay)
+    
+    if best_antinode is None:
+        return None
+    
+    x, y = best_antinode
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 3. CALCULATE SIZE based on mode wavelength and frequency shift goal
+    # ════════════════════════════════════════════════════════════════════════
+    # Mode wavelength: λ = 2L/m (in X) or 2W/n (in Y)
+    lambda_x = 2.0 / target_mode.m  # Normalized
+    lambda_y = 2.0 / target_mode.n  # Normalized
+    
+    # Cutout should be λ/8 to λ/4 for effective tuning
+    base_width = lambda_x * np.random.uniform(0.08, 0.20)
+    base_height = lambda_y * np.random.uniform(0.08, 0.20)
+    
+    # Clamp to reasonable range
+    width = np.clip(base_width, 0.02, 0.12)
+    height = np.clip(base_height, 0.02, 0.12)
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 4. CHOOSE SHAPE based on zone and mode character
+    # ════════════════════════════════════════════════════════════════════════
+    # Spine zone (y=0.3-0.7): slots/ellipse for bass reinforcement
+    # Head zone (y>0.7): f_hole/vesica for detail
+    # Feet zone (y<0.3): crescent/kidney for vibration
+    
+    if y > 0.65:  # Head zone
+        shapes = ["f_hole", "vesica", "ellipse", "leaf", "tear"]
+    elif y < 0.35:  # Feet zone  
+        shapes = ["crescent", "kidney", "ellipse", "wave"]
+    else:  # Spine zone
+        shapes = ["ellipse", "slot", "s_curve", "leaf", "spiral"]
+    
+    # Higher modes (more complex) → more complex shapes
+    if target_mode.m + target_mode.n > 4:
+        shapes = ["spiral", "wave", "freeform", "s_curve"] + shapes[:2]
+    
+    shape = np.random.choice(shapes)
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 5. CALCULATE ROTATION based on local mode curvature
+    # ════════════════════════════════════════════════════════════════════════
+    # Get local gradient direction
+    ix = int(x * (analyzer.nx - 1))
+    iy = int(y * (analyzer.ny - 1))
+    ix = np.clip(ix, 1, analyzer.nx - 2)
+    iy = np.clip(iy, 1, analyzer.ny - 2)
+    
+    shape_arr = target_mode.mode_shape
+    grad_x = (shape_arr[min(ix+1, analyzer.nx-1), iy] - shape_arr[max(ix-1, 0), iy]) / 2
+    grad_y = (shape_arr[ix, min(iy+1, analyzer.ny-1)] - shape_arr[ix, max(iy-1, 0)]) / 2
+    
+    # Rotation perpendicular to gradient (along nodal line) for max effect
+    if abs(grad_x) + abs(grad_y) > 0.01:
+        rotation = np.arctan2(grad_y, grad_x) + np.pi/2
+    else:
+        rotation = np.random.uniform(0, 2*np.pi)
+    
+    # Add some randomness
+    rotation += np.random.normal(0, 0.2)
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 6. CALCULATE EXPECTED FREQUENCY SHIFT (for logging)
+    # ════════════════════════════════════════════════════════════════════════
+    rr = analyzer.rayleigh_ritz_frequency_shift(
+        target_mode, x, y, 
+        cutout_size=(width + height) / 2,
+        cutout_shape=shape
+    )
+    delta_f = rr.get("delta_f_hz", 0.0) if isinstance(rr, dict) else 0.0
+    
+    # Log the physics decision
+    log_cutout_placement(
+        x=x, y=y,
+        shape=shape,
+        purpose=purpose.value,
+        target_mode=target_mode.mode_id,
+        expected_freq_shift=delta_f,
+        confidence=best_score,
+        logger=evo_logger
+    )
+    
+    log_physics_decision(
+        decision=f"Place cutout at ({x:.2f}, {y:.2f})",
+        reason=f"Mode {target_mode.mode_id} antinode with amplitude {analyzer.get_mode_amplitude_at(x, y, target_mode_idx):.2f}. "
+               f"Rayleigh-Ritz predicts Δf={delta_f:.1f}Hz",
+        reference="Schleske 2002, Fletcher & Rossing 1998",
+        logger=evo_logger
+    )
     
     return {
-        "x": s.x,
-        "y": s.y,
-        "width": s.size_suggestion[0],
-        "height": s.size_suggestion[1],
-        "rotation": np.random.uniform(0, np.pi),  # Random rotation
-        "shape": s.shape_suggestion,
-        "corner_radius": 0.3,
-        "aspect_bias": 1.0,
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "rotation": rotation,
+        "shape": shape,
+        "corner_radius": np.random.uniform(0.1, 0.5),
+        "aspect_bias": np.random.uniform(0.7, 1.5),
     }
+
+
+def create_physics_guided_groove(
+    genome,
+    analyzer: ModalAnalyzer,
+    existing_grooves: Optional[List] = None,
+    n_groove: int = 1,
+) -> Optional[dict]:
+    """
+    Create a physics-guided groove with INTELLIGENT PARAMETERS.
+    
+    GROOVES vs CUTOUTS - When to use each:
+    
+    CUTOUTS (fori passanti):
+    - Large frequency shifts (> 5Hz)
+    - Major mode restructuring
+    - Helmholtz resonance (like f-holes)
+    - Mass removal dominates
+    
+    GROOVES (scanalature):
+    - Fine frequency tuning (< 5Hz)
+    - Stiffness reduction without mass removal
+    - Graduation like violin plates
+    - Local thickness thinning
+    
+    PHYSICS-BASED GROOVE PARAMETERS:
+    
+    1. DEPTH varies based on:
+       - Required stiffness change (deeper = more effect)
+       - I ∝ h³, so small depth changes → big stiffness changes
+       - Typical: 20-40% of thickness
+    
+    2. LENGTH varies based on:
+       - Mode wavelength (longer groove = wider frequency effect)
+       - Zone coverage (longer in spine for broad bass)
+    
+    3. WIDTH varies based on:
+       - Fresa tool size (3mm, 5mm, 6mm, 8mm standard)
+       - Precision needed (narrower for fine tuning)
+    
+    4. ANGLE varies based on:
+       - Cross grain: perpendicular to mode nodal lines
+       - Diagonal: for torsional mode tuning
+       - Parallel: for bending mode tuning
+    
+    Args:
+        genome: PlateGenome
+        analyzer: ModalAnalyzer with computed modes
+        existing_grooves: List of existing GrooveGene objects
+        n_groove: Which groove number (1, 2, 3...) for variety
+    
+    Returns:
+        Dict with groove parameters, or None
+    """
+    # Ensure modes computed
+    if not analyzer._modes:
+        analyzer.compute_modes(n_modes=15)
+    
+    modes = analyzer._modes
+    if not modes:
+        return None
+    
+    # Get existing positions
+    avoid = []
+    if existing_grooves:
+        for g in existing_grooves:
+            avoid.append((g.x, g.y))
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 1. SELECT TARGET MODE (different from cutouts - target HIGHER modes)
+    # Grooves are for fine tuning, so target modes 3-8 typically
+    # ════════════════════════════════════════════════════════════════════════
+    target_mode_idx = min(2 + n_groove, len(modes) - 1)  # Start from mode 3
+    target_mode = modes[target_mode_idx]
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 2. POSITION: Grooves go along NODAL LINES for mode isolation
+    # Or across antinodes for maximum stiffness change
+    # ════════════════════════════════════════════════════════════════════════
+    # Strategy: alternate between nodal and antinode placement
+    if n_groove % 2 == 0:
+        # Place near nodal line (minimal effect on this mode, affects others)
+        candidates = target_mode.nodes
+    else:
+        # Place at antinode (maximum effect on this mode)
+        candidates = target_mode.antinodes
+    
+    if not candidates:
+        # Fallback: random in spine zone
+        x = np.random.uniform(0.25, 0.75)
+        y = np.random.uniform(0.35, 0.65)
+    else:
+        # Pick one away from existing grooves
+        best_candidate = None
+        best_dist = -1
+        for cx, cy in candidates:
+            min_dist = 1.0
+            for ex, ey in avoid:
+                dist = np.sqrt((cx - ex)**2 + (cy - ey)**2)
+                min_dist = min(min_dist, dist)
+            if min_dist > best_dist:
+                best_dist = min_dist
+                best_candidate = (cx, cy)
+        
+        if best_candidate:
+            x, y = best_candidate
+        else:
+            x, y = candidates[0]
+    
+    # Keep in valid range
+    x = np.clip(x, 0.15, 0.85)
+    y = np.clip(y, 0.20, 0.80)
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 3. LENGTH based on mode wavelength
+    # ════════════════════════════════════════════════════════════════════════
+    lambda_x = 2.0 / target_mode.m
+    lambda_y = 2.0 / target_mode.n
+    
+    # Groove length: λ/4 to λ/2
+    length = np.random.uniform(0.5, 1.0) * min(lambda_x, lambda_y) / 2
+    length = np.clip(length, 0.05, 0.20)
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 4. ANGLE based on mode character
+    # ════════════════════════════════════════════════════════════════════════
+    # For bending modes (low m or n): perpendicular to dominant direction
+    # For torsional modes (m≈n): diagonal
+    
+    if target_mode.m > target_mode.n:
+        # Dominant X mode: groove perpendicular (vertical)
+        base_angle = np.pi / 2
+    elif target_mode.n > target_mode.m:
+        # Dominant Y mode: groove horizontal
+        base_angle = 0.0
+    else:
+        # Torsional: diagonal
+        base_angle = np.pi / 4 * np.random.choice([-1, 1])
+    
+    angle = base_angle + np.random.normal(0, 0.2)
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # 5. DEPTH and WIDTH based on required tuning magnitude
+    # ════════════════════════════════════════════════════════════════════════
+    # Higher mode number → needs less depth (more sensitive)
+    mode_order = target_mode.m + target_mode.n
+    depth = np.random.uniform(0.20, 0.45) / (1 + 0.1 * mode_order)
+    depth = np.clip(depth, 0.15, 0.40)
+    
+    # Standard fresa widths
+    width_options = [3.0, 4.0, 5.0, 6.0, 8.0]
+    # Narrower for higher modes (more precision)
+    if mode_order > 5:
+        width_mm = np.random.choice(width_options[:3])
+    else:
+        width_mm = np.random.choice(width_options)
+    
+    return {
+        "x": x,
+        "y": y,
+        "length": length,
+        "angle": angle,
+        "depth": depth,
+        "width_mm": width_mm,
+    }
+
+
+def decide_cutout_vs_groove(
+    genome,
+    analyzer: ModalAnalyzer,
+    target_freq_shift: float,
+    max_cutouts: int,
+    max_grooves: int,
+    existing_cutouts: Optional[List] = None,
+    existing_grooves: Optional[List] = None,
+) -> Tuple[str, Optional[dict]]:
+    """
+    Intelligently decide whether to add a CUTOUT or GROOVE.
+    
+    DECISION LOGIC (based on lutherie principles):
+    
+    | Δf needed | Zone     | Recommendation |
+    |-----------|----------|----------------|
+    | > 10 Hz   | Any      | CUTOUT (large mass effect) |
+    | 5-10 Hz   | Spine    | GROOVE (fine tune bass) |
+    | 5-10 Hz   | Head     | CUTOUT (detail clarity) |
+    | < 5 Hz    | Any      | GROOVE (precise adjustment) |
+    | Any       | Edge     | CUTOUT (ABH potential) |
+    
+    Args:
+        genome: PlateGenome
+        analyzer: ModalAnalyzer
+        target_freq_shift: Desired frequency change magnitude (Hz)
+        max_cutouts, max_grooves: Limits from config
+        existing_cutouts, existing_grooves: Current features
+        
+    Returns:
+        ("cutout", params) or ("groove", params) or ("none", None)
+    """
+    n_existing_cutouts = len(existing_cutouts) if existing_cutouts else 0
+    n_existing_grooves = len(existing_grooves) if existing_grooves else 0
+    
+    can_add_cutout = max_cutouts > 0 and n_existing_cutouts < max_cutouts
+    can_add_groove = max_grooves > 0 and n_existing_grooves < max_grooves
+    
+    if not can_add_cutout and not can_add_groove:
+        return ("none", None)
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # DECISION BASED ON FREQUENCY SHIFT MAGNITUDE
+    # ════════════════════════════════════════════════════════════════════════
+    
+    if abs(target_freq_shift) > 10.0:
+        # Large shift needed → CUTOUT (mass removal)
+        if can_add_cutout:
+            params = create_physics_guided_cutout(
+                genome, analyzer,
+                existing_cutouts=existing_cutouts,
+                n_cutout=n_existing_cutouts + 1
+            )
+            return ("cutout", params)
+    
+    elif abs(target_freq_shift) < 5.0:
+        # Small shift → GROOVE (stiffness fine-tune)
+        if can_add_groove:
+            params = create_physics_guided_groove(
+                genome, analyzer,
+                existing_grooves=existing_grooves,
+                n_groove=n_existing_grooves + 1
+            )
+            return ("groove", params)
+    
+    # Medium shift: depends on what's available
+    if can_add_cutout and (not can_add_groove or np.random.random() < 0.6):
+        params = create_physics_guided_cutout(
+            genome, analyzer,
+            existing_cutouts=existing_cutouts,
+            n_cutout=n_existing_cutouts + 1
+        )
+        return ("cutout", params)
+    elif can_add_groove:
+        params = create_physics_guided_groove(
+            genome, analyzer,
+            existing_grooves=existing_grooves,
+            n_groove=n_existing_grooves + 1
+        )
+        return ("groove", params)
+    
+    return ("none", None)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

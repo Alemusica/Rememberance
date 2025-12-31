@@ -13,96 +13,13 @@ import numpy as np
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MATERIAL DATABASE
-# ══════════════════════════════════════════════════════════════════════════════
+# Import unified material definitions
+from .materials import Material, MATERIALS
 
-@dataclass
-class Material:
-    """Material properties for plate modal analysis"""
-    name: str
-    density: float              # kg/m³
-    E_longitudinal: float       # Pa (Young's modulus along grain/length)
-    E_transverse: float         # Pa (Young's modulus across grain/width)
-    poisson_ratio: float        # dimensionless
-    damping_ratio: float        # dimensionless (typical 0.01-0.05)
-    description: str = ""
-
-# Material database with acoustic properties
-MATERIALS: Dict[str, Material] = {
-    "spruce": Material(
-        name="Spruce (Sitka)",
-        density=450.0,
-        E_longitudinal=12.0e9,      # 12 GPa along grain
-        E_transverse=0.8e9,         # 0.8 GPa across grain (orthotropic)
-        poisson_ratio=0.37,
-        damping_ratio=0.01,         # Very low - excellent resonance
-        description="Traditional soundboard wood, excellent acoustic properties"
-    ),
-    "birch_plywood": Material(
-        name="Birch Plywood",
-        density=680.0,
-        E_longitudinal=13.0e9,
-        E_transverse=13.0e9,        # Plywood is quasi-isotropic
-        poisson_ratio=0.33,
-        damping_ratio=0.025,
-        description="Strong, stable, good for structural applications"
-    ),
-    "marine_plywood": Material(
-        name="Marine Plywood",
-        density=700.0,
-        E_longitudinal=12.5e9,
-        E_transverse=12.5e9,
-        poisson_ratio=0.30,
-        damping_ratio=0.02,
-        description="Water resistant, stable, good damping"
-    ),
-    "mdf": Material(
-        name="MDF",
-        density=750.0,
-        E_longitudinal=4.0e9,
-        E_transverse=4.0e9,         # Isotropic
-        poisson_ratio=0.25,
-        damping_ratio=0.04,         # Higher damping
-        description="Uniform, cheap, higher damping than wood"
-    ),
-    "oak": Material(
-        name="Oak",
-        density=700.0,
-        E_longitudinal=12.0e9,
-        E_transverse=1.0e9,
-        poisson_ratio=0.35,
-        damping_ratio=0.015,
-        description="Dense hardwood, warm tone"
-    ),
-    "maple": Material(
-        name="Maple",
-        density=650.0,
-        E_longitudinal=13.0e9,
-        E_transverse=1.1e9,
-        poisson_ratio=0.35,
-        damping_ratio=0.012,
-        description="Bright, articulate, used in instruments"
-    ),
-    "aluminum": Material(
-        name="Aluminum 6061",
-        density=2700.0,
-        E_longitudinal=69.0e9,
-        E_transverse=69.0e9,        # Isotropic metal
-        poisson_ratio=0.33,
-        damping_ratio=0.002,        # Very low damping - rings
-        description="Metal, long sustain, bright tone"
-    ),
-    "steel": Material(
-        name="Steel",
-        density=7850.0,
-        E_longitudinal=200.0e9,
-        E_transverse=200.0e9,
-        poisson_ratio=0.30,
-        damping_ratio=0.001,
-        description="Very stiff, long sustain"
-    ),
-}
+# ══════════════════════════════════════════════════════════════════════════════
+# RE-EXPORT FOR BACKWARD COMPATIBILITY
+# Other modules can still do: from .plate_physics import Material, MATERIALS
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 # ══════════════════════════════════════════════════════════════════════════════

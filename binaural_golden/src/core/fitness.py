@@ -33,7 +33,18 @@ from .structural_analysis import (
     detect_peninsulas, PeninsulaResult
 )
 
+# Evolution logging (physics-driven)
+from .evolution_logger import (
+    log_zone_priority,
+    log_modal_analysis,
+    log_fitness_evaluation,
+    log_comparison_with_target,
+    log_physics_decision,
+    setup_evolution_logging,
+)
+
 logger = logging.getLogger(__name__)
+evo_logger = logging.getLogger("golden_studio.evolution")
 
 
 @dataclass
@@ -105,6 +116,7 @@ class FitnessResult:
     # Exciter and groove scores (lutherie)
     exciter_coupling_score: float = 0.0  # Exciter placement quality
     groove_tuning_score: float = 0.0     # Groove effectiveness
+    cutout_tuning_score: float = 0.0     # Cutout effectiveness (ABH/lutherie)
     
     # Score totale pesato
     total_fitness: float = 0.0
@@ -189,6 +201,16 @@ class FitnessEvaluator:
         self.n_freq_points = n_freq_points
         self.n_modes = n_modes
         
+        # ═══════════════════════════════════════════════════════════════════
+        # LOG ZONE PRIORITY - Physics: zone weights determine WHERE 
+        # optimization focuses energy (spine 70% vs head 30%)
+        # ═══════════════════════════════════════════════════════════════════
+        log_zone_priority(
+            spine_weight=self.zone_weights.spine,
+            head_weight=self.zone_weights.head,
+            logger=evo_logger
+        )
+        
         # Frequenze di test
         self.test_frequencies = np.linspace(
             freq_range[0], freq_range[1], n_freq_points
@@ -262,6 +284,23 @@ class FitnessEvaluator:
         result.frequencies = frequencies
         result.mode_shapes = mode_shapes
         
+        # ═══════════════════════════════════════════════════════════════════
+        # LOG MODAL ANALYSIS - Physics: reveals natural vibration patterns
+        # Resolution must be > distance between cutouts (Schleske 2002)
+        # ═══════════════════════════════════════════════════════════════════
+        n_modes_computed = len(frequencies)
+        # Estimate resolution from mode shapes (typically matches genome grid)
+        resolution = mode_shapes.shape[1:] if mode_shapes is not None and len(mode_shapes.shape) > 2 else (40, 24)
+        log_modal_analysis(
+            plate_length=genome.length,
+            plate_width=genome.width,
+            thickness=genome.thickness_base,
+            n_modes=n_modes_computed,
+            frequencies=frequencies[:5] if frequencies else [],
+            resolution=resolution,
+            logger=evo_logger
+        )
+        
         # 2. Calcola risposta in frequenza globale
         freq_response = self._compute_frequency_response(genome, frequencies, mode_shapes)
         result.frequency_response = freq_response
@@ -302,7 +341,10 @@ class FitnessEvaluator:
         # 10. Score: groove effectiveness (lutherie tuning)
         result.groove_tuning_score = self._score_groove_tuning(genome)
         
-        # 11. Score: structural integrity (deflection under person weight)
+        # 11. Score: cutout effectiveness (acoustic black hole / lutherie)
+        result.cutout_tuning_score = self._score_cutout_effectiveness(genome, frequencies, mode_shapes)
+        
+        # 12. Score: structural integrity (deflection under person weight)
         result.structural_score = self._score_structural_integrity(genome, result)
 
         # Score totale pesato
@@ -314,8 +356,22 @@ class FitnessEvaluator:
             self.objectives.manufacturability * result.manufacturability_score +
             0.1 * result.exciter_coupling_score +  # Bonus for good exciter placement
             0.05 * result.groove_tuning_score +    # Bonus for effective grooves
+            0.08 * result.cutout_tuning_score +    # Bonus for effective cutouts (ABH/lutherie)
             0.4 * result.ear_uniformity_score      # HIGH weight for L/R balance!
         )
+        
+        # === CRITICAL PENALTY: Plate too short for person ===
+        # A plate shorter than person + 15cm is UNUSABLE - apply severe penalty!
+        min_length = self.person.recommended_plate_length
+        if genome.length < min_length:
+            length_deficit = (min_length - genome.length) / min_length
+            # Apply multiplicative penalty: 50% reduction for 25% deficit
+            length_penalty = min(0.6, length_deficit * 2.0)
+            result.total_fitness *= (1.0 - length_penalty)
+            logger.warning(
+                f"Length penalty: plate {genome.length:.2f}m < required {min_length:.2f}m "
+                f"(-{length_penalty*100:.0f}% fitness)"
+            )
         
         # STRUCTURAL PENALTY: Reduce fitness if deflection exceeds limit
         # This ensures the person won't "fall through" the plate!
@@ -325,6 +381,24 @@ class FitnessEvaluator:
             logger.warning(
                 f"Structural penalty: deflection={result.max_deflection_mm:.1f}mm > 10mm limit"
             )
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # LOG FITNESS EVALUATION - Complete assessment
+        # ═══════════════════════════════════════════════════════════════════
+        n_cutouts = len(genome.cutouts) if genome.cutouts else 0
+        log_fitness_evaluation(
+            genome_id=id(genome) % 10000,  # Short ID
+            flatness_score=result.flatness_score,
+            spine_flatness=result.spine_flatness_score,
+            head_flatness=result.head_flatness_score,
+            ear_uniformity=result.ear_uniformity_score,
+            spine_coupling=result.spine_coupling_score,
+            structural_score=result.structural_score,
+            total_fitness=result.total_fitness,
+            zone_weights=(self.zone_weights.spine, self.zone_weights.head),
+            n_cutouts=n_cutouts,
+            logger=evo_logger
+        )
         
         return result
     
@@ -863,8 +937,19 @@ class FitnessEvaluator:
         - Forme troppo complesse
         - Troppi tagli
         - Spessori estremi
+        - Tavola troppo corta per la persona (CRITICAL!)
         """
         score = 1.0
+        
+        # === CRITICAL: Penalità per tavola troppo corta ===
+        # La tavola DEVE essere >= person.height + 0.15m
+        min_length = self.person.recommended_plate_length
+        if genome.length < min_length:
+            # Penalità proporzionale al deficit
+            deficit = min_length - genome.length
+            deficit_ratio = deficit / min_length
+            # Penalità pesante: tavola inutilizzabile se troppo corta!
+            score -= min(0.8, deficit_ratio * 2.0)
         
         # Penalità per cutouts
         n_cuts = len(genome.cutouts)
@@ -973,6 +1058,96 @@ class FitnessEvaluator:
         if len(angles) > 1:
             angle_variance = np.var(angles)
             score += 0.1 * min(angle_variance / 0.5, 1)  # Encourage variety
+        
+        return np.clip(score, 0, 1)
+    
+    def _score_cutout_effectiveness(
+        self, 
+        genome: PlateGenome,
+        frequencies: np.ndarray,
+        mode_shapes: np.ndarray
+    ) -> float:
+        """
+        Score for cutout effectiveness based on lutherie and ABH principles.
+        
+        RESEARCH BASIS:
+        - Schleske 2002: Cutouts/holes at antinodes shift frequencies maximally
+        - Krylov 2014, Deng 2019: ABH (Acoustic Black Holes) focus energy
+        - Bai 2004: GA-based optimization for DML
+        
+        SCORING:
+        1. Cutout at mode antinode → shifts that frequency (useful for tuning)
+        2. Cutout near edges → ABH-like energy focusing (bonus)
+        3. Cutout in ear zone → improves L/R uniformity potential
+        4. Too large cutouts → structural penalty (handled elsewhere)
+        
+        Returns:
+            Score 0-1 (1.0 = very effective cutout placement)
+        """
+        if not hasattr(genome, 'cutouts') or not genome.cutouts:
+            return 0.5  # Neutral score if no cutouts
+        
+        score = 0.6  # Base score for having cutouts (encourages exploration)
+        n_cutouts = len(genome.cutouts)
+        
+        # --- 1. Antinode placement bonus ---
+        # Cutouts near antinodes have more acoustic effect
+        antinode_bonus = 0.0
+        for cut in genome.cutouts:
+            # Check each mode's shape at cutout location
+            for i, mode_shape in enumerate(mode_shapes[:6]):  # First 6 modes
+                if mode_shape is None:
+                    continue
+                # Sample mode amplitude at cutout (normalized coords)
+                nx, ny = int(cut.x * 10), int(cut.y * 10)  # Coarse grid
+                try:
+                    if hasattr(mode_shape, 'shape') and len(mode_shape.shape) >= 2:
+                        ny_max, nx_max = mode_shape.shape[:2]
+                        nx = min(nx, nx_max - 1)
+                        ny = min(ny, ny_max - 1)
+                        amplitude = abs(mode_shape[ny, nx])
+                        if amplitude > 0.5:  # Near antinode
+                            antinode_bonus += 0.02  # Small bonus per mode
+                except (IndexError, TypeError):
+                    pass
+        
+        score += min(antinode_bonus, 0.15)  # Cap at +0.15
+        
+        # --- 2. ABH edge placement bonus ---
+        # Cutouts near edges can focus energy (Krylov, Deng)
+        abh_bonus = 0.0
+        for cut in genome.cutouts:
+            dist_to_edge = min(cut.x, 1 - cut.x, cut.y, 1 - cut.y)
+            if dist_to_edge < 0.15:  # Near edge (within 15% of dimension)
+                abh_bonus += 0.04  # ABH-like behavior
+        
+        score += min(abh_bonus, 0.12)  # Cap at +0.12
+        
+        # --- 3. Ear zone cutouts bonus ---
+        # Cutouts near head end (y > 0.8) can improve ear response
+        ear_cutouts = sum(1 for c in genome.cutouts if c.y > 0.8)
+        score += 0.04 * min(ear_cutouts, 2)  # Up to +0.08
+        
+        # --- 4. Spine zone avoidance ---
+        # Don't cut holes in main load-bearing spine zone (y=0.35-0.65)
+        spine_cutouts = sum(1 for c in genome.cutouts if 0.35 <= c.y <= 0.65 and 0.3 <= c.x <= 0.7)
+        score -= 0.06 * spine_cutouts  # Penalty for spine holes
+        
+        # --- 5. Size appropriateness ---
+        # Small cutouts (< 5% of plate area) are better for tuning
+        total_cutout_area = sum(c.width * c.height for c in genome.cutouts)
+        if total_cutout_area < 0.03:  # < 3% total
+            score += 0.05  # Good restraint
+        elif total_cutout_area > 0.10:  # > 10% total
+            score -= 0.1  # Too much material removed
+        
+        # --- 6. Distribution bonus ---
+        # Asymmetric placement (different x positions) can break unwanted modes
+        if n_cutouts >= 2:
+            x_positions = [c.x for c in genome.cutouts]
+            x_variance = np.var(x_positions)
+            if x_variance > 0.05:  # Well distributed
+                score += 0.05
         
         return np.clip(score, 0, 1)
     

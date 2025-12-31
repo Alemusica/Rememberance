@@ -104,8 +104,13 @@ class Person:
     
     @property
     def recommended_plate_length(self) -> float:
-        """Lunghezza tavola raccomandata [m]."""
-        return self.height_m + 0.10  # 10cm margine
+        """
+        Lunghezza tavola raccomandata [m].
+        
+        MUST be > person height to accommodate full body.
+        Minimum margin: 15cm (head + feet clearance)
+        """
+        return max(self.height_m + 0.15, 1.70)  # Min 1.70m even for children
     
     @property
     def recommended_plate_width(self) -> float:

@@ -64,9 +64,36 @@ result = evaluator.evaluate(genome)
 
 ## SurrealDB Knowledge Base
 - **URL**: http://localhost:8000
-- **Auth**: root:root
+- **Auth**: root:root (Basic: cm9vdDpyb290)
 - **Headers**: `surreal-ns: research`, `surreal-db: knowledge`
-- **72 papers** indexed in `docs/research/vibroacoustic_references.bib`
+
+### Tables
+| Table | Content |
+|-------|---------|
+| `paper` | 72+ paper scientifici con cite_key, title, abstract, section, project_relevance |
+| `algorithm` | Algoritmi validati con success_rate e paper_sources (tracciabilità ai paper ispiratori) |
+| `concept` | Concetti distillati dalla ricerca |
+
+### Query Esempi
+```sql
+-- Cerca paper
+SELECT * FROM paper WHERE title CONTAINS 'genetic';
+
+-- Algoritmi con successo > 80%
+SELECT * FROM algorithm WHERE success_rate > 0.8;
+
+-- Quali algoritmi derivano da un paper?
+SELECT * FROM algorithm WHERE paper_sources CONTAINS 'bai2004genetic';
+
+-- Dettagli algoritmo
+SELECT * FROM algorithm:nsga2_plate_optimizer;
+```
+
+### MCP Tools Disponibili
+- `search_papers(query)` - Cerca paper per keyword
+- `get_algorithms(domain, min_success_rate)` - Algoritmi validati
+- `get_algorithm_details(id)` - Dettagli con paper sources
+- `find_algorithms_by_paper(cite_key)` - Algoritmi ispirati da un paper
 
 ## Tests
 ```bash

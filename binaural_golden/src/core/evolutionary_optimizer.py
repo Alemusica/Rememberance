@@ -25,8 +25,19 @@ logger = logging.getLogger(__name__)
 
 # Local imports
 from .person import Person
-from .plate_genome import PlateGenome, ContourType
+from .plate_genome import PlateGenome, ContourType, SpringSupportGene
 from .fitness import FitnessEvaluator, FitnessResult, ObjectiveWeights, ZoneWeights
+
+# Evolution logging (physics-driven)
+from .evolution_logger import (
+    log_generation_summary,
+    log_cutout_placement,
+    log_comparison_with_target,
+    log_physics_decision,
+    setup_evolution_logging,
+)
+
+evo_logger = logging.getLogger("golden_studio.evolution")
 
 
 class SelectionMethod(Enum):
@@ -40,29 +51,35 @@ class SelectionMethod(Enum):
 class EvolutionConfig:
     """
     Configurazione algoritmo evolutivo.
+    
+    Presets disponibili:
+    - QUICK: Test rapido (pop=20, gen=30) 
+    - STANDARD: Bilanciato (pop=50, gen=100)
+    - INTENSE: Massimizzato per M1 Max (pop=100, gen=300)
+    - EXHAUSTIVE: Ricerca esaustiva (pop=200, gen=500)
     """
     # Popolazione
-    population_size: int = 30
-    n_generations: int = 50
-    elite_count: int = 2
+    population_size: int = 50       # Increased from 30
+    n_generations: int = 100        # Increased from 50
+    elite_count: int = 3            # Keep top 3
     
     # Selezione
     selection_method: SelectionMethod = SelectionMethod.TOURNAMENT
-    tournament_size: int = 3
+    tournament_size: int = 4        # Increased from 3
     
     # Operatori genetici
-    crossover_rate: float = 0.8
-    mutation_rate: float = 0.3
-    mutation_sigma: float = 0.05  # Deviazione standard mutazione
+    crossover_rate: float = 0.85    # Slightly higher
+    mutation_rate: float = 0.25     # Slightly lower for stability
+    mutation_sigma: float = 0.05    # Deviazione standard mutazione
     
     # Adattamento mutazione
     adaptive_mutation: bool = True
-    mutation_decay: float = 0.95  # Riduzione sigma per generazione
-    min_mutation_sigma: float = 0.01
+    mutation_decay: float = 0.97    # Slower decay (was 0.95)
+    min_mutation_sigma: float = 0.008  # Lower floor (was 0.01)
     
     # Diversità
-    diversity_threshold: float = 0.1
-    diversity_injection_rate: float = 0.1
+    diversity_threshold: float = 0.08
+    diversity_injection_rate: float = 0.12
     
     # Vincoli dimensionali (STANDARD: 210cm x 80cm = 1.68 m²)
     # La superficie non può superare il +20% dello standard
@@ -72,6 +89,7 @@ class EvolutionConfig:
     
     # Vincoli contorno
     allowed_contours: List[ContourType] = field(default_factory=lambda: [
+        ContourType.PHI_ROUNDED,  # New default with golden corners
         ContourType.RECTANGLE,
         ContourType.GOLDEN_RECT,
         ContourType.ELLIPSE,
@@ -83,15 +101,103 @@ class EvolutionConfig:
         ContourType.FREEFORM,
     ])
     fixed_contour: Optional[ContourType] = None  # If set, only use this contour type
-    max_cutouts: int = 4
+    max_cutouts: int = 6   # Increased from 4 for more modal tuning options
+    max_grooves: int = 4   # Enable grooves by default for fine tuning
     
     # Symmetry enforcement (LUTHERIE: like violin/guitar plates)
     enforce_symmetry: bool = True  # Default ON for balanced vibroacoustic response
     
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SPRING SUPPORTS (physics-based vibration isolation)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Reference: Den Hartog "Mechanical Vibrations", Harris & Piersol "Shock and Vibration"
+    # Natural frequency: f_n = √(k/m) / (2π)
+    # Isolation starts above f_n × √2 (transmissibility T < 1)
+    spring_count: int = 5  # Number of spring supports (3-8)
+    spring_stiffness_kn_m: float = 10.0  # Default stiffness in kN/m
+    spring_damping_ratio: float = 0.10  # ζ = damping ratio (0.02-0.30)
+    spring_clearance_mm: float = 70.0  # Min clearance under plate for hardware
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # GPU/ACCELERATION (for M1 Max with Metal/JAX)
+    # ═══════════════════════════════════════════════════════════════════════════
+    use_jax_fem: bool = True       # Use JAX FEM if available
+    batch_size: int = 10           # Evaluate this many genomes in parallel on GPU
+    cache_modal_analysis: bool = True  # Cache FEM results for similar geometries
+    
     # Stopping
-    convergence_threshold: float = 0.0001  # More strict: 0.01% improvement
-    patience: int = 20  # Generations without improvement before checking
-    min_generations_before_stop: int = 40  # Minimum generations before allowing early stop (was 30)
+    convergence_threshold: float = 0.00005  # Even stricter: 0.005% improvement
+    patience: int = 30              # Generations without improvement before checking
+    min_generations_before_stop: int = 60  # Minimum generations before allowing early stop
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EVOLUTION CONFIG PRESETS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_evolution_preset(name: str) -> EvolutionConfig:
+    """
+    Get predefined evolution configuration preset.
+    
+    Args:
+        name: One of 'quick', 'standard', 'intense', 'exhaustive'
+    
+    Returns:
+        EvolutionConfig with preset values
+    """
+    presets = {
+        'quick': EvolutionConfig(
+            population_size=20,
+            n_generations=30,
+            elite_count=2,
+            max_cutouts=4,
+            max_grooves=0,
+            min_generations_before_stop=20,
+        ),
+        'standard': EvolutionConfig(
+            population_size=50,
+            n_generations=100,
+            elite_count=3,
+            max_cutouts=6,
+            max_grooves=4,
+            min_generations_before_stop=60,
+        ),
+        'intense': EvolutionConfig(
+            population_size=100,
+            n_generations=300,
+            elite_count=5,
+            tournament_size=5,
+            crossover_rate=0.9,
+            mutation_rate=0.2,
+            mutation_decay=0.98,
+            max_cutouts=8,
+            max_grooves=6,
+            batch_size=20,  # More parallel on GPU
+            min_generations_before_stop=150,
+            patience=50,
+        ),
+        'exhaustive': EvolutionConfig(
+            population_size=200,
+            n_generations=500,
+            elite_count=8,
+            tournament_size=6,
+            crossover_rate=0.92,
+            mutation_rate=0.15,
+            mutation_decay=0.99,
+            max_cutouts=10,
+            max_grooves=8,
+            batch_size=30,  # Maximum GPU utilization
+            min_generations_before_stop=300,
+            patience=80,
+            convergence_threshold=0.00001,  # Ultra strict
+        ),
+    }
+    
+    if name.lower() not in presets:
+        available = ', '.join(presets.keys())
+        raise ValueError(f"Unknown preset '{name}'. Available: {available}")
+    
+    return presets[name.lower()]
 
 
 @dataclass
@@ -315,21 +421,99 @@ class EvolutionaryOptimizer:
             # Varia spessore
             thickness = np.random.uniform(0.012, 0.020)
             
+            # ═══════════════════════════════════════════════════════════════════
+            # Generate spring supports with physics-based stiffness distribution
+            # References: Den Hartog "Mechanical Vibrations", Beranek "Noise Control"
+            # ═══════════════════════════════════════════════════════════════════
+            spring_supports = self._generate_spring_supports()
+            
             genome = PlateGenome(
                 length=base_length * length_var,
                 width=base_width * width_var,
                 thickness_base=thickness,
                 contour_type=contour,
+                max_cutouts=self.config.max_cutouts,
+                max_grooves=self.config.max_grooves,
+                spring_supports=spring_supports,
+                min_support_clearance_mm=self.config.spring_clearance_mm,
             )
             
-            # Qualche individuo con cutouts
-            if np.random.random() < 0.2:
-                if self.config.enforce_symmetry:
-                    genome = genome.mutate_symmetric(p_add_cutout=0.8)
-                else:
-                    genome = genome.mutate(p_add_cutout=0.8)
+            # ═══════════════════════════════════════════════════════════════════
+            # LUTHERIE INIT: Ensure diverse population with cutouts
+            # Like violin makers, start with different f-hole configurations
+            # ═══════════════════════════════════════════════════════════════════
+            if self.config.max_cutouts > 0:
+                # 70% start with cutouts (was 50%), higher p_add for diversity
+                if np.random.random() < 0.7:
+                    # Multiple mutations to ensure cutouts get added
+                    for _ in range(3):  # Try 3 times to add cutouts
+                        if self.config.enforce_symmetry:
+                            genome = genome.mutate_symmetric(p_add_cutout=0.9)
+                        else:
+                            genome = genome.mutate(p_add_cutout=0.9)
+                        if genome.cutouts:  # Stop if we got cutouts
+                            break
             
             self._population.append(genome)
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Evaluation
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Spring Support Generation
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    def _generate_spring_supports(self) -> List[SpringSupportGene]:
+        """
+        Generate spring supports with physics-based distribution.
+        
+        Physics rationale (Den Hartog, Harris & Piersol):
+        - Stiffer springs (higher k) near structural loads (head end)
+        - Softer springs (lower k) near bass zone (foot end) for isolation
+        - Damping ratio ζ = 0.08-0.12 for good isolation with some damping
+        
+        Returns:
+            List of SpringSupportGene with evolvable positions
+        """
+        n = self.config.spring_count
+        k_base = self.config.spring_stiffness_kn_m * 1000  # kN/m → N/m
+        zeta = self.config.spring_damping_ratio
+        
+        springs = []
+        
+        # Distribute springs along Y axis (body length)
+        # Symmetric X positions with center spring
+        for i in range(n):
+            # Y position: from 0.2 (head) to 0.9 (foot)
+            y = 0.2 + 0.7 * i / max(n - 1, 1)
+            
+            # X position: alternate sides with center spring for odd n
+            if n == 1:
+                x = 0.5
+            elif i == n - 1 and n % 2 == 1:  # Center spring at foot
+                x = 0.5
+            elif i % 2 == 0:
+                x = 0.2 + np.random.uniform(-0.05, 0.05)  # Left side
+            else:
+                x = 0.8 + np.random.uniform(-0.05, 0.05)  # Right side
+            
+            # Stiffness: stiffer at head (y < 0.5), softer at foot (y > 0.5)
+            # This creates bass isolation at foot where spine zone is
+            k_factor = 1.2 - 0.4 * y  # 1.2 at y=0, 0.84 at y=0.9
+            k = k_base * k_factor * np.random.uniform(0.9, 1.1)  # ±10% variation
+            
+            # Slight damping variation
+            zeta_i = zeta * np.random.uniform(0.9, 1.1)
+            
+            springs.append(SpringSupportGene(
+                x=max(0.1, min(0.9, x)),  # Clamp to valid range
+                y=y,
+                stiffness_n_m=k,
+                damping_ratio=max(0.02, min(0.30, zeta_i)),  # Clamp damping
+            ))
+        
+        return springs
     
     # ─────────────────────────────────────────────────────────────────────────
     # Evaluation
@@ -358,6 +542,36 @@ class EvolutionaryOptimizer:
         
         # Registra storia
         self._fitness_history.append(self._best_fitness.total_fitness)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # LOG GENERATION SUMMARY - Track evolution progress
+        # ═══════════════════════════════════════════════════════════════════
+        if self._generation > 0:
+            # Calculate average fitness
+            avg_fitness = np.mean([g.fitness for g in self._population])
+            
+            # Calculate improvement from previous generation
+            improvement = 0.0
+            if len(self._fitness_history) >= 2:
+                improvement = self._fitness_history[-1] - self._fitness_history[-2]
+            
+            # Get best genome info
+            best_n_cutouts = len(self._best_genome.cutouts) if self._best_genome.cutouts else 0
+            best_n_grooves = len(self._best_genome.grooves) if self._best_genome.grooves else 0
+            best_contour = self._best_genome.contour_type.name
+            
+            log_generation_summary(
+                generation=self._generation,
+                best_fitness=self._best_fitness.total_fitness,
+                avg_fitness=avg_fitness,
+                diversity=self._compute_diversity(),
+                mutation_sigma=self._current_mutation_sigma,
+                best_n_cutouts=best_n_cutouts,
+                best_n_grooves=best_n_grooves,
+                best_contour=best_contour,
+                improvement=improvement,
+                logger=evo_logger
+            )
     
     # ─────────────────────────────────────────────────────────────────────────
     # Evolution
@@ -374,7 +588,16 @@ class EvolutionaryOptimizer:
             reverse=True
         )
         elite = sorted_pop[:self.config.elite_count]
-        new_population.extend([copy.deepcopy(g) for g in elite])
+        for g in elite:
+            elite_copy = copy.deepcopy(g)
+            # FORCE config limits on elite too
+            elite_copy.max_cutouts = self.config.max_cutouts
+            elite_copy.max_grooves = self.config.max_grooves
+            if self.config.max_grooves == 0:
+                elite_copy.grooves = []
+            if self.config.max_cutouts == 0:
+                elite_copy.cutouts = []
+            new_population.append(elite_copy)
         
         # Genera resto della popolazione
         while len(new_population) < self.config.population_size:
@@ -390,17 +613,51 @@ class EvolutionaryOptimizer:
                 child1 = copy.deepcopy(parent1)
                 child2 = copy.deepcopy(parent2)
             
+            # FORCE config limits on children (prevents legacy genomes with wrong max values)
+            child1.max_cutouts = self.config.max_cutouts
+            child1.max_grooves = self.config.max_grooves
+            child2.max_cutouts = self.config.max_cutouts
+            child2.max_grooves = self.config.max_grooves
+            # Clear features if disabled
+            if self.config.max_grooves == 0:
+                child1.grooves = []
+                child2.grooves = []
+            if self.config.max_cutouts == 0:
+                child1.cutouts = []
+                child2.cutouts = []
+            
             # Mutazione
             if np.random.random() < self.config.mutation_rate:
+                # LUTHERIE: Higher cutout probability (like violin f-holes)
+                # Cutouts are the main tuning tool, not just decoration
+                p_cutout = 0.4 if self.config.max_cutouts > 0 else 0.0
                 if self.config.enforce_symmetry:
-                    child1 = child1.mutate_symmetric(sigma_contour=self._current_mutation_sigma)
+                    child1 = child1.mutate_symmetric(
+                        sigma_contour=self._current_mutation_sigma,
+                        p_add_cutout=p_cutout
+                    )
                 else:
-                    child1 = child1.mutate(sigma_contour=self._current_mutation_sigma)
+                    child1 = child1.mutate(
+                        sigma_contour=self._current_mutation_sigma,
+                        p_add_cutout=p_cutout
+                    )
             if np.random.random() < self.config.mutation_rate:
+                p_cutout = 0.4 if self.config.max_cutouts > 0 else 0.0
                 if self.config.enforce_symmetry:
-                    child2 = child2.mutate_symmetric(sigma_contour=self._current_mutation_sigma)
+                    child2 = child2.mutate_symmetric(
+                        sigma_contour=self._current_mutation_sigma,
+                        p_add_cutout=p_cutout
+                    )
                 else:
-                    child2 = child2.mutate(sigma_contour=self._current_mutation_sigma)
+                    child2 = child2.mutate(
+                        sigma_contour=self._current_mutation_sigma,
+                        p_add_cutout=p_cutout
+                    )
+            
+            # ENFORCE FIXED CONTOUR (AFTER mutation to override any contour changes)
+            if self.config.fixed_contour is not None:
+                child1.contour_type = self.config.fixed_contour
+                child2.contour_type = self.config.fixed_contour
             
             new_population.append(child1)
             if len(new_population) < self.config.population_size:

@@ -222,12 +222,36 @@ class PlateDesignerTab(ttk.Frame):
         )
         self._cutouts_info.grid(row=3, column=2, padx=2, pady=3, sticky='w')
         
+        # Grooves (LUTHERIE: scanalature per fine tuning - EXPENSIVE!)
+        # Default OFF because they add computational cost
+        self._grooves_enabled_var = tk.BooleanVar(value=False)  # Default OFF
+        self._grooves_var = tk.IntVar(value=4)  # Default 4 if enabled
+        self._grooves_check = ttk.Checkbutton(
+            self._config_frame, text="Grooves (fine tune):",
+            variable=self._grooves_enabled_var,
+            command=self._on_grooves_toggle
+        )
+        self._grooves_check.grid(row=4, column=0, padx=5, pady=3, sticky='e')
+        
+        self._grooves_spin = ttk.Spinbox(
+            self._config_frame, from_=1, to=8, increment=1,
+            textvariable=self._grooves_var, width=6, state="disabled"  # Disabled by default
+        )
+        self._grooves_spin.grid(row=4, column=1, padx=5, pady=3)
+        
+        self._grooves_info = ttk.Label(
+            self._config_frame, 
+            text="(costly - enable for fine tuning)",
+            font=("SF Pro", 7), foreground="gray"
+        )
+        self._grooves_info.grid(row=4, column=2, padx=2, pady=3, sticky='w')
+        
         # Zone Weights Slider (Spine vs Head priority) - LEGACY: kept for compatibility
         self._create_label(self._config_frame, "Zone Priority:").grid(
-            row=4, column=0, padx=5, pady=3, sticky='e')
+            row=5, column=0, padx=5, pady=3, sticky='e')
         
         self._zone_frame = ttk.Frame(self._config_frame)
-        self._zone_frame.grid(row=4, column=1, padx=5, pady=3, sticky='w')
+        self._zone_frame.grid(row=5, column=1, padx=5, pady=3, sticky='w')
         
         # Spine label
         ttk.Label(self._zone_frame, text="Spine", font=("SF Pro", 8)).pack(side='left')
@@ -252,13 +276,14 @@ class PlateDesignerTab(ttk.Frame):
         self._zone_display.pack(side='left', padx=5)
         
         # === CONTOUR TYPE SELECTOR ===
-        # Row 5: Plate shape selection
+        # Row 6: Plate shape selection
         self._create_label(self._config_frame, "Contour:").grid(
-            row=5, column=0, padx=5, pady=3, sticky='e')
+            row=6, column=0, padx=5, pady=3, sticky='e')
         
-        self._contour_var = tk.StringVar(value="VESICA_PISCIS")  # Default: sacred geometry
+        self._contour_var = tk.StringVar(value="PHI_ROUNDED")  # Default: PHI rounded corners
         self._contour_options = [
-            "RECTANGLE",      # Fixed rectangle
+            "PHI_ROUNDED",    # Rectangle with PHI-based rounded corners (NEW!)
+            "RECTANGLE",      # Fixed rectangle (sharp corners)
             "GOLDEN_RECT",    # Golden ratio rectangle
             "ELLIPSE",        # Smooth ellipse
             "OVOID",          # Egg shape (narrower at one end)
@@ -273,7 +298,7 @@ class PlateDesignerTab(ttk.Frame):
             self._config_frame, textvariable=self._contour_var,
             values=self._contour_options, state="readonly", width=12
         )
-        self._contour_combo.grid(row=5, column=1, padx=5, pady=3)
+        self._contour_combo.grid(row=6, column=1, padx=5, pady=3)
         self._contour_combo.bind("<<ComboboxSelected>>", self._on_contour_changed)
         
         # Contour description
@@ -282,27 +307,27 @@ class PlateDesignerTab(ttk.Frame):
             text="smooth curves, CNC-friendly",
             font=("SF Pro", 7), foreground="gray"
         )
-        self._contour_info.grid(row=5, column=2, padx=2, pady=3, sticky='w')
+        self._contour_info.grid(row=6, column=2, padx=2, pady=3, sticky='w')
         
         # === ADVANCED: Radar Plot for multi-parameter optimization ===
-        # Row 6: Radar plot toggle
+        # Row 7: Radar plot toggle
         self._radar_enabled_var = tk.BooleanVar(value=False)
         self._radar_check = ttk.Checkbutton(
             self._config_frame, text="Advanced Tuning (Radar):",
             variable=self._radar_enabled_var,
             command=self._on_radar_toggle
         )
-        self._radar_check.grid(row=6, column=0, padx=5, pady=3, sticky='e')
+        self._radar_check.grid(row=7, column=0, padx=5, pady=3, sticky='e')
         
         # Radar widget (initially hidden)
         self._radar_frame = ttk.Frame(self._config_frame)
-        self._radar_frame.grid(row=6, column=1, columnspan=2, padx=5, pady=3, sticky='w')
+        self._radar_frame.grid(row=7, column=1, columnspan=2, padx=5, pady=3, sticky='w')
         
         try:
             from ui.widgets.radar_widget import RadarWidget
             self._radar_widget = RadarWidget(
                 self._radar_frame,
-                size=140,
+                size=180,  # Larger to show all labels (Energy, Flatness, Spine)
                 on_change=self._on_radar_changed
             )
             self._radar_widget.pack()
@@ -312,6 +337,70 @@ class PlateDesignerTab(ttk.Frame):
             self._radar_check.config(state='disabled')
             ttk.Label(self._radar_frame, text="(Radar unavailable)", 
                       foreground='gray').pack()
+        
+        # === SPRING SUPPORTS CONFIGURATION ===
+        # Row 8: Number of springs (evolvable positions, fixed count)
+        self._create_label(self._config_frame, "Spring Supports:").grid(
+            row=8, column=0, padx=5, pady=3, sticky='e')
+        
+        self._spring_frame = ttk.Frame(self._config_frame)
+        self._spring_frame.grid(row=8, column=1, columnspan=2, padx=5, pady=3, sticky='w')
+        
+        # Number of springs (3-8, default 5)
+        ttk.Label(self._spring_frame, text="N:", font=("SF Pro", 8)).pack(side='left')
+        self._spring_count_var = tk.IntVar(value=5)
+        self._spring_count_spin = ttk.Spinbox(
+            self._spring_frame, from_=3, to=8, increment=1,
+            textvariable=self._spring_count_var, width=3
+        )
+        self._spring_count_spin.pack(side='left', padx=2)
+        self._spring_count_spin.bind('<FocusOut>', self._on_spring_config_changed)
+        
+        # Default stiffness (kN/m)
+        ttk.Label(self._spring_frame, text="k:", font=("SF Pro", 8)).pack(side='left', padx=(8,0))
+        self._spring_stiffness_var = tk.DoubleVar(value=10.0)  # 10 kN/m default
+        self._spring_stiffness_spin = ttk.Spinbox(
+            self._spring_frame, from_=3.0, to=50.0, increment=1.0,
+            textvariable=self._spring_stiffness_var, width=5, format="%.1f"
+        )
+        self._spring_stiffness_spin.pack(side='left', padx=2)
+        self._spring_stiffness_spin.bind('<FocusOut>', self._on_spring_config_changed)
+        ttk.Label(self._spring_frame, text="kN/m", font=("SF Pro", 7)).pack(side='left')
+        
+        # Row 9: Damping ratio and clearance
+        self._create_label(self._config_frame, "").grid(row=9, column=0)  # Empty label for alignment
+        
+        self._spring_frame2 = ttk.Frame(self._config_frame)
+        self._spring_frame2.grid(row=9, column=1, columnspan=2, padx=5, pady=1, sticky='w')
+        
+        # Damping ratio (ζ)
+        ttk.Label(self._spring_frame2, text="ζ:", font=("SF Pro", 8)).pack(side='left')
+        self._spring_damping_var = tk.DoubleVar(value=0.10)  # 10% damping default
+        self._spring_damping_spin = ttk.Spinbox(
+            self._spring_frame2, from_=0.02, to=0.30, increment=0.02,
+            textvariable=self._spring_damping_var, width=5, format="%.2f"
+        )
+        self._spring_damping_spin.pack(side='left', padx=2)
+        self._spring_damping_spin.bind('<FocusOut>', self._on_spring_config_changed)
+        
+        # Min clearance (mm)
+        ttk.Label(self._spring_frame2, text="Clear:", font=("SF Pro", 8)).pack(side='left', padx=(8,0))
+        self._spring_clearance_var = tk.DoubleVar(value=70.0)  # 70mm default
+        self._spring_clearance_spin = ttk.Spinbox(
+            self._spring_frame2, from_=30.0, to=150.0, increment=5.0,
+            textvariable=self._spring_clearance_var, width=5, format="%.0f"
+        )
+        self._spring_clearance_spin.pack(side='left', padx=2)
+        self._spring_clearance_spin.bind('<FocusOut>', self._on_spring_config_changed)
+        ttk.Label(self._spring_frame2, text="mm", font=("SF Pro", 7)).pack(side='left')
+        
+        # Physics info tooltip
+        self._spring_info = ttk.Label(
+            self._config_frame, 
+            text="(transmissibility physics, f_n = √(k/m)/2π)",
+            font=("SF Pro", 7), foreground="gray"
+        )
+        self._spring_info.grid(row=10, column=1, columnspan=2, padx=5, pady=1, sticky='w')
         
         # --- Control Buttons ---
         self._control_frame = ttk.Frame(self._top_frame, style="TFrame")
@@ -536,10 +625,12 @@ class PlateDesignerTab(ttk.Frame):
         
         # Update info label with description
         descriptions = {
-            "RECTANGLE": "fixed rectangular shape",
+            "PHI_ROUNDED": "φ-rounded corners (smooth energy flow)",
+            "RECTANGLE": "fixed rectangular shape (sharp corners)",
             "GOLDEN_RECT": "φ ratio rectangle (1:1.618)",
             "ELLIPSE": "smooth elliptical shape",
             "OVOID": "egg shape, narrow at top",
+            "VESICA_PISCIS": "sacred geometry (overlapping circles)",
             "SUPERELLIPSE": "squircle (rounded corners)",
             "ORGANIC": "smooth curves, CNC-friendly",
             "ERGONOMIC": "body-conforming shape",
@@ -610,13 +701,38 @@ class PlateDesignerTab(ttk.Frame):
         """Handle config change."""
         try:
             max_cutouts = self._cutouts_var.get() if self._cutouts_enabled_var.get() else 0
+            max_grooves = self._grooves_var.get() if self._grooves_enabled_var.get() else 0
             self._viewmodel.set_evolution_config(
                 population_size=self._pop_var.get(),
                 max_generations=self._gen_var.get(),
                 mutation_rate=self._mutation_var.get(),
-                max_cutouts=max_cutouts
+                max_cutouts=max_cutouts,
+                max_grooves=max_grooves,
+                # Spring configuration
+                spring_count=self._spring_count_var.get(),
+                spring_stiffness_kn_m=self._spring_stiffness_var.get(),
+                spring_damping_ratio=self._spring_damping_var.get(),
+                spring_clearance_mm=self._spring_clearance_var.get()
             )
         except tk.TclError:
+            pass
+    
+    def _on_spring_config_changed(self, event=None):
+        """Handle spring configuration change."""
+        self._on_config_changed()
+        
+        # Update physics info tooltip with calculated natural frequency
+        try:
+            k = self._spring_stiffness_var.get() * 1000  # kN/m → N/m
+            m = self._weight_var.get()  # Use person's weight as approximation
+            if m > 0 and k > 0:
+                import math
+                f_n = math.sqrt(k / m) / (2 * math.pi)
+                f_iso = f_n * math.sqrt(2)
+                self._spring_info.config(
+                    text=f"f_n≈{f_n:.1f}Hz, isolation>{f_iso:.1f}Hz (mass={m:.0f}kg)"
+                )
+        except (tk.TclError, ZeroDivisionError):
             pass
     
     def _on_cutouts_toggle(self):
@@ -625,6 +741,14 @@ class PlateDesignerTab(ttk.Frame):
         self._cutouts_spin.config(state="normal" if enabled else "disabled")
         if enabled and self._cutouts_var.get() < 1:
             self._cutouts_var.set(4)  # Default 4 cutouts (like f-holes: 2 per side)
+        self._on_config_changed()
+    
+    def _on_grooves_toggle(self):
+        """Toggle grooves enable/disable (fine tuning mode - EXPENSIVE!)."""
+        enabled = self._grooves_enabled_var.get()
+        self._grooves_spin.config(state="normal" if enabled else "disabled")
+        if enabled and self._grooves_var.get() < 1:
+            self._grooves_var.set(4)  # Default 4 grooves
         self._on_config_changed()
     
     def _on_start(self):

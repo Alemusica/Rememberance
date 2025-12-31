@@ -31,6 +31,9 @@ try:
 except ImportError:
     HAS_SCIPY = False
 
+# Import unified material definitions
+from .materials import Material, MATERIALS
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATA STRUCTURES
@@ -42,22 +45,6 @@ class PlateShape(Enum):
     ELLIPSE = "ellipse"
     POLYGON = "polygon"
     CUSTOM = "custom"  # Hand-drawn
-
-
-@dataclass
-class Material:
-    """Material properties for plate modal analysis."""
-    name: str
-    density: float              # kg/m³
-    E_longitudinal: float       # Pa
-    E_transverse: float         # Pa
-    poisson_ratio: float
-    damping_ratio: float = 0.01
-    
-    @property
-    def E_mean(self) -> float:
-        """Average Young's modulus for isotropic approximation."""
-        return (self.E_longitudinal + self.E_transverse) / 2
 
 
 @dataclass
@@ -82,26 +69,80 @@ class FEMMode:
         return float(interp(x, y))
 
 
-# Material database
-MATERIALS: Dict[str, Material] = {
-    "spruce": Material("Spruce", 450.0, 12.0e9, 0.8e9, 0.37, 0.01),
-    "birch_plywood": Material("Birch Plywood", 680.0, 13.0e9, 13.0e9, 0.33, 0.025),
-    "marine_plywood": Material("Marine Plywood", 700.0, 12.5e9, 12.5e9, 0.30, 0.02),
-    "mdf": Material("MDF", 750.0, 4.0e9, 4.0e9, 0.25, 0.04),
-    "oak": Material("Oak", 700.0, 12.0e9, 1.0e9, 0.35, 0.015),
-    "maple": Material("Maple", 650.0, 13.0e9, 1.1e9, 0.35, 0.012),
-    "aluminum": Material("Aluminum", 2700.0, 69.0e9, 69.0e9, 0.33, 0.002),
-    "steel": Material("Steel", 7850.0, 200.0e9, 200.0e9, 0.30, 0.001),
-}
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # MESH GENERATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def create_rectangle_mesh(length: float, width: float, resolution: int = 20) -> Tuple[np.ndarray, np.ndarray]:
+def _point_inside_ellipse(px: float, py: float, cx: float, cy: float, 
+                          a: float, b: float, rotation: float = 0.0) -> bool:
+    """Check if point is inside rotated ellipse."""
+    # Translate to ellipse center
+    dx = px - cx
+    dy = py - cy
+    # Rotate back
+    cos_r = np.cos(-rotation)
+    sin_r = np.sin(-rotation)
+    rx = dx * cos_r - dy * sin_r
+    ry = dx * sin_r + dy * cos_r
+    # Check ellipse equation
+    return (rx / a)**2 + (ry / b)**2 <= 1.0
+
+
+def _point_inside_cutout(px: float, py: float, cutout_abs: Dict) -> bool:
     """
-    Create triangular mesh for rectangular plate.
+    Check if point is inside a cutout (absolute coordinates).
+    
+    cutout_abs has: center, size, rotation, shape
+    """
+    cx, cy = cutout_abs["center"]
+    w, h = cutout_abs["size"]
+    rotation = cutout_abs.get("rotation", 0.0)
+    shape = cutout_abs.get("shape", "ellipse")
+    
+    # Semi-axes
+    a = w / 2
+    b = h / 2
+    
+    if shape == "ellipse":
+        return _point_inside_ellipse(px, py, cx, cy, a, b, rotation)
+    elif shape == "rectangle" or shape == "rounded_rect":
+        # Rotate point back to cutout frame
+        dx = px - cx
+        dy = py - cy
+        cos_r = np.cos(-rotation)
+        sin_r = np.sin(-rotation)
+        rx = dx * cos_r - dy * sin_r
+        ry = dx * sin_r + dy * cos_r
+        return abs(rx) <= a and abs(ry) <= b
+    elif shape == "diamond":
+        # Diamond: |x/a| + |y/b| <= 1
+        dx = px - cx
+        dy = py - cy
+        cos_r = np.cos(-rotation)
+        sin_r = np.sin(-rotation)
+        rx = dx * cos_r - dy * sin_r
+        ry = dx * sin_r + dy * cos_r
+        return abs(rx / a) + abs(ry / b) <= 1.0
+    else:
+        # Default: use ellipse
+        return _point_inside_ellipse(px, py, cx, cy, a, b, rotation)
+
+
+def create_rectangle_mesh(
+    length: float, 
+    width: float, 
+    resolution: int = 20,
+    cutouts_abs: Optional[List[Dict]] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Create triangular mesh for rectangular plate with optional cutouts.
+    
+    Args:
+        length: Plate length in meters (x-axis)
+        width: Plate width in meters (y-axis)
+        resolution: Mesh resolution
+        cutouts_abs: List of cutouts in absolute coordinates from CutoutGene.to_absolute()
+                    Each dict has: center, size, rotation, shape
     
     Returns:
         (points, triangles) - points is (N,2), triangles is (M,3)
@@ -117,9 +158,44 @@ def create_rectangle_mesh(length: float, width: float, resolution: int = 20) -> 
     X, Y = np.meshgrid(x, y)
     points = np.column_stack([X.ravel(), Y.ravel()])
     
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CUTOUT MESH MODIFICATION - Remove points inside cutouts
+    # Reference: Standard FEM practice for holes in structural analysis
+    # ═══════════════════════════════════════════════════════════════════════════
+    if cutouts_abs:
+        mask = np.ones(len(points), dtype=bool)
+        for cutout in cutouts_abs:
+            for i, (px, py) in enumerate(points):
+                if _point_inside_cutout(px, py, cutout):
+                    mask[i] = False
+        points = points[mask]
+    
+    # Need minimum points for triangulation
+    if len(points) < 4:
+        # Fallback: return minimal mesh
+        points = np.array([[0, 0], [length, 0], [length, width], [0, width]])
+    
     # Create triangulation
     tri = Delaunay(points)
     triangles = tri.simplices
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # REMOVE TRIANGLES WHOSE CENTROID IS INSIDE A CUTOUT
+    # This ensures no triangles span across the hole
+    # ═══════════════════════════════════════════════════════════════════════════
+    if cutouts_abs:
+        valid_triangles = []
+        for tri_idx in triangles:
+            # Triangle centroid
+            centroid = points[tri_idx].mean(axis=0)
+            inside_cutout = False
+            for cutout in cutouts_abs:
+                if _point_inside_cutout(centroid[0], centroid[1], cutout):
+                    inside_cutout = True
+                    break
+            if not inside_cutout:
+                valid_triangles.append(tri_idx)
+        triangles = np.array(valid_triangles) if valid_triangles else triangles
     
     return points, triangles
 
@@ -222,17 +298,36 @@ def calculate_flexural_rigidity(E: float, h: float, nu: float) -> float:
     return (E * h**3) / (12 * (1 - nu**2))
 
 
+def _find_nearest_node(points: np.ndarray, x: float, y: float) -> int:
+    """Find index of nearest mesh node to (x, y)."""
+    distances = np.sqrt((points[:, 0] - x)**2 + (points[:, 1] - y)**2)
+    return int(np.argmin(distances))
+
+
 def fem_modal_analysis(
     points: np.ndarray,
     triangles: np.ndarray,
     thickness: float,
     material: Material,
-    n_modes: int = 10
+    n_modes: int = 10,
+    spring_supports_abs: Optional[List[Dict]] = None
 ) -> List[FEMMode]:
     """
-    Perform FEM modal analysis on arbitrary mesh.
+    Perform FEM modal analysis on arbitrary mesh with optional spring supports.
     
     Uses Kirchhoff plate theory with scikit-fem.
+    
+    ═══════════════════════════════════════════════════════════════════════════
+    SPRING SUPPORT via PENALTY METHOD (Zienkiewicz & Taylor 2000)
+    ═══════════════════════════════════════════════════════════════════════════
+    
+    The penalty method adds spring stiffness to diagonal of global K matrix:
+        K_global[i, i] += k_spring
+    
+    This creates a soft constraint that:
+    - For k_spring → ∞: rigid support (node fixed)
+    - For k_spring ~ plate stiffness: elastic support
+    - Shifts natural frequencies based on support stiffness
     
     Args:
         points: (N, 2) mesh node coordinates in meters
@@ -240,6 +335,8 @@ def fem_modal_analysis(
         thickness: plate thickness in meters
         material: Material properties
         n_modes: number of modes to compute
+        spring_supports_abs: List of spring supports in absolute coordinates
+                            Each dict has: position (x, y), stiffness_n_m
     
     Returns:
         List of FEMMode objects sorted by frequency
@@ -273,6 +370,32 @@ def fem_modal_analysis(
         
         K = stiffness.assemble(basis)
         M = mass_form.assemble(basis)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # PENALTY METHOD: Add spring stiffness to global K matrix
+        # Reference: Zienkiewicz & Taylor (2000), Harris & Piersol (2002)
+        # ═══════════════════════════════════════════════════════════════════════
+        if spring_supports_abs:
+            # Convert K to lil_matrix for efficient modification
+            from scipy.sparse import lil_matrix
+            K_lil = lil_matrix(K)
+            
+            for support in spring_supports_abs:
+                # Get support position and stiffness
+                sx, sy = support["position"]
+                k_spring = support.get("stiffness_n_m", 8000.0)
+                
+                # Find nearest mesh node
+                node_idx = _find_nearest_node(points, sx, sy)
+                
+                # For quadratic elements, node_idx might need mapping to DOF
+                # In simple case, DOF index = node index
+                dof_idx = node_idx
+                if dof_idx < K_lil.shape[0]:
+                    K_lil[dof_idx, dof_idx] += k_spring
+            
+            # Convert back to csr for efficient arithmetic
+            K = K_lil.tocsr()
         
         # Solve eigenvalue problem
         # K * phi = lambda * M * phi
@@ -427,7 +550,7 @@ def calculate_optimal_phases_fem(
 class PlateAnalyzer:
     """
     High-level interface for plate modal analysis.
-    Supports various shapes and provides easy access to modes and coupling.
+    Supports various shapes, cutouts, and spring supports.
     """
     
     def __init__(self):
@@ -445,6 +568,10 @@ class PlateAnalyzer:
         self.ellipse_b = 0.3
         self.polygon_vertices: List[Tuple[float, float]] = []
         self.custom_points: List[Tuple[float, float]] = []
+        
+        # NEW: Cutouts and spring supports
+        self.cutouts_abs: List[Dict] = []
+        self.spring_supports_abs: List[Dict] = []
     
     def set_rectangle(self, length_m: float, width_m: float):
         """Set plate shape to rectangle."""
@@ -477,11 +604,32 @@ class PlateAnalyzer:
         """Set plate thickness in meters."""
         self.thickness = thickness_m
     
+    def set_cutouts(self, cutouts_abs: List[Dict]):
+        """
+        Set cutouts for mesh generation.
+        
+        Args:
+            cutouts_abs: List of cutout dicts from CutoutGene.to_absolute()
+                        Each has: center, size, rotation, shape
+        """
+        self.cutouts_abs = cutouts_abs
+    
+    def set_spring_supports(self, spring_supports_abs: List[Dict]):
+        """
+        Set spring supports for FEM analysis.
+        
+        Args:
+            spring_supports_abs: List of support dicts from SpringSupportGene.to_absolute()
+                                Each has: position, stiffness_n_m
+        """
+        self.spring_supports_abs = spring_supports_abs
+    
     def generate_mesh(self, resolution: int = 20):
-        """Generate mesh for current shape."""
+        """Generate mesh for current shape with optional cutouts."""
         if self.shape == PlateShape.RECTANGLE:
             self.points, self.triangles = create_rectangle_mesh(
-                self.rect_length, self.rect_width, resolution
+                self.rect_length, self.rect_width, resolution,
+                cutouts_abs=self.cutouts_abs  # NEW: Pass cutouts
             )
         elif self.shape == PlateShape.ELLIPSE:
             self.points, self.triangles = create_ellipse_mesh(
@@ -503,7 +651,7 @@ class PlateAnalyzer:
                 self.points, self.triangles = create_rectangle_mesh(1.0, 0.5, resolution)
     
     def analyze(self, n_modes: int = 10) -> List[FEMMode]:
-        """Run modal analysis and return modes."""
+        """Run modal analysis with optional spring supports."""
         if self.points is None:
             self.generate_mesh()
         
@@ -512,7 +660,8 @@ class PlateAnalyzer:
             self.triangles,
             self.thickness,
             self.material,
-            n_modes
+            n_modes,
+            spring_supports_abs=self.spring_supports_abs  # NEW: Pass springs
         )
         return self.modes
     

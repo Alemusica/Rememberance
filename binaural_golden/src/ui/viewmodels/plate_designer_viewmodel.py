@@ -10,6 +10,7 @@
 ║   • Thread-safe evolution management                                          ║
 ║   • Fitness history tracking                                                  ║
 ║   • Export capabilities                                                       ║
+║   • PHYSICS-DRIVEN EVOLUTION LOGGING                                          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
@@ -20,6 +21,7 @@ import threading
 import queue
 import time
 import copy
+import logging
 
 # Core imports
 from core.person import Person, PERSON_PRESETS
@@ -31,6 +33,26 @@ from core.evolutionary_optimizer import (
     EvolutionState,
     SelectionMethod,
 )
+
+# Pymoo NSGA-II (multi-objective)
+try:
+    from core.pymoo_optimizer import PymooOptimizer, PymooConfig, PymooResult, PYMOO_AVAILABLE
+except ImportError:
+    PYMOO_AVAILABLE = False
+    PymooOptimizer = None
+    PymooConfig = None
+
+# Evolution logging (physics-driven)
+from core.evolution_logger import (
+    setup_evolution_logging,
+    get_evolution_handler,
+    get_formatted_logs,
+    generate_evolution_summary,
+    log_comparison_with_target,
+)
+
+# Setup evolution logging
+evo_logger = setup_evolution_logging(logging.INFO)
 
 
 class EvolutionPhase(Enum):
@@ -108,7 +130,18 @@ class PlateDesignerState:
     # Evolution config
     population_size: int = 30
     mutation_rate: float = 0.3
-    max_cutouts: int = 0  # Internal cutouts for weight reduction
+    max_cutouts: int = 4  # Lutherie standard: 4 cutouts (like f-holes, 2 per side)
+    max_grooves: int = 0  # Default OFF - expensive computationally
+    max_attached_masses: int = 0  # Attached masses for modal tuning (Shen 2016)
+    
+    # Spring support configuration (physics-based)
+    spring_count: int = 5  # Number of spring supports (3-8)
+    spring_stiffness_kn_m: float = 10.0  # Default stiffness in kN/m
+    spring_damping_ratio: float = 0.10  # ζ = damping ratio (0.02-0.30)
+    spring_clearance_mm: float = 70.0  # Min clearance under plate for hardware
+    
+    # Algorithm selection: GA custom vs pymoo NSGA-II/III
+    use_nsga2: bool = False  # False = GA custom, True = pymoo NSGA-II (Pareto front)
     
     # Zone weights for frequency response optimization (spine vs head)
     spine_weight: float = 0.70  # 70% priority on spine flatness
@@ -123,6 +156,10 @@ class PlateDesignerState:
     
     # Error handling
     error_message: Optional[str] = None
+    
+    # Evolution logs (physics-driven debugging)
+    evolution_logs: List[str] = field(default_factory=list)  # Recent log messages
+    log_count: int = 0  # Total log entries for UI refresh trigger
     
     @property
     def progress_percent(self) -> float:
@@ -268,14 +305,48 @@ class PlateDesignerViewModel:
         population_size: int = 30,
         max_generations: int = 50,
         mutation_rate: float = 0.3,
-        max_cutouts: int = 0
+        max_cutouts: int = 4,  # Default 4 like lutherie f-holes
+        max_grooves: int = 0,  # Default OFF - expensive computationally
+        max_attached_masses: int = 0,  # Attached masses (Shen 2016)
+        use_nsga2: bool = False,  # True = pymoo NSGA-II (Pareto front)
+        # Spring support configuration (physics-based: f_n = √(k/m)/2π)
+        spring_count: int = 5,
+        spring_stiffness_kn_m: float = 10.0,
+        spring_damping_ratio: float = 0.10,
+        spring_clearance_mm: float = 70.0
     ):
-        """Configure evolution parameters."""
+        """Configure evolution parameters including spring supports.
+        
+        Spring supports use real vibration isolation physics:
+        - Natural frequency: f_n = √(k/m) / (2π)
+        - Isolation starts above f_n × √2
+        - Transmissibility formula: T(ω) = √[(1+(2ζr)²)/((1-r²)²+(2ζr)²)]
+        """
         with self._lock:
             self._state.population_size = population_size
             self._state.max_generations = max_generations
             self._state.mutation_rate = mutation_rate
             self._state.max_cutouts = max_cutouts
+            self._state.max_grooves = max_grooves
+            self._state.max_attached_masses = max_attached_masses
+            self._state.use_nsga2 = use_nsga2
+            # Spring configuration
+            self._state.spring_count = spring_count
+            self._state.spring_stiffness_kn_m = spring_stiffness_kn_m
+            self._state.spring_damping_ratio = spring_damping_ratio
+            self._state.spring_clearance_mm = spring_clearance_mm
+        self._notify_observers()
+    
+    def set_algorithm(self, use_nsga2: bool):
+        """
+        Switch between GA custom and pymoo NSGA-II.
+        
+        Args:
+            use_nsga2: True for pymoo NSGA-II (Pareto front),
+                      False for custom GA (single objective)
+        """
+        with self._lock:
+            self._state.use_nsga2 = use_nsga2
         self._notify_observers()
     
     def set_contour_type(self, contour_name: str):
@@ -354,6 +425,11 @@ class PlateDesignerViewModel:
             self._set_error("No person configured")
             return
         
+        # Check if NSGA-II requested but not available
+        if self._state.use_nsga2 and not PYMOO_AVAILABLE:
+            self._set_error("pymoo not installed. Run: pip install pymoo>=0.6.0")
+            return
+        
         # Update state
         with self._lock:
             self._state.is_running = True
@@ -382,33 +458,77 @@ class PlateDesignerViewModel:
             }
             fixed_contour = contour_map.get(self._state.contour_type)
         
-        # Create config
-        config = EvolutionConfig(
-            population_size=self._state.population_size,
-            n_generations=self._state.max_generations,
-            mutation_rate=self._state.mutation_rate,
-            max_cutouts=self._state.max_cutouts,
-            fixed_contour=fixed_contour,  # None means AUTO (evolve contour type)
-        )
-        
         # Create zone weights for frequency response optimization
         zone_weights = ZoneWeights(
             spine=self._state.spine_weight,
             head=self._state.head_weight
         )
         
-        # Create optimizer with zone weights
-        self._optimizer = EvolutionaryOptimizer(
-            person=self._state.person,
-            config=config,
-            zone_weights=zone_weights,
+        # ═══════════════════════════════════════════════════════════════════════
+        # CREATE OBJECTIVE WEIGHTS FROM RADAR/UI SETTINGS
+        # Maps user-facing parameters to fitness objective weights
+        # ═══════════════════════════════════════════════════════════════════════
+        objectives = ObjectiveWeights(
+            flatness=self._state.flatness_weight,        # From radar widget
+            spine_coupling=self._state.energy_weight * 2,  # Energy → coupling (scaled)
+            low_mass=0.3,                                 # Keep plate light
+            manufacturability=0.5,                        # CNC-friendly shapes
         )
         
-        # Start evolution thread
-        self._evolution_thread = threading.Thread(
-            target=self._run_evolution,
-            daemon=True
-        )
+        # ═══════════════════════════════════════════════════════════════════════
+        # ALGORITHM SELECTION: GA custom vs pymoo NSGA-II
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        if self._state.use_nsga2 and PYMOO_AVAILABLE:
+            # Use pymoo NSGA-II for Pareto front multi-objective optimization
+            pymoo_config = PymooConfig(
+                algorithm="nsga2",
+                population_size=self._state.population_size,
+                n_generations=self._state.max_generations,
+                n_exciters=2,  # Start with 2 exciters for simplicity
+            )
+            
+            self._pymoo_optimizer = PymooOptimizer(
+                person=self._state.person,
+                config=pymoo_config,
+                zone_weights=zone_weights,
+                contour_type=fixed_contour or ContourType.RECTANGLE,
+            )
+            
+            # Start NSGA-II thread
+            self._evolution_thread = threading.Thread(
+                target=self._run_nsga2_evolution,
+                daemon=True
+            )
+        else:
+            # Use custom GA (single weighted objective)
+            config = EvolutionConfig(
+                population_size=self._state.population_size,
+                n_generations=self._state.max_generations,
+                mutation_rate=self._state.mutation_rate,
+                max_cutouts=self._state.max_cutouts,
+                max_grooves=self._state.max_grooves,
+                fixed_contour=fixed_contour,
+                # Spring support configuration (physics-based)
+                spring_count=self._state.spring_count,
+                spring_stiffness_kn_m=self._state.spring_stiffness_kn_m,
+                spring_damping_ratio=self._state.spring_damping_ratio,
+                spring_clearance_mm=self._state.spring_clearance_mm,
+            )
+            
+            self._optimizer = EvolutionaryOptimizer(
+                person=self._state.person,
+                config=config,
+                zone_weights=zone_weights,
+                objectives=objectives,  # Pass radar weights to fitness evaluator
+            )
+            
+            # Start GA thread
+            self._evolution_thread = threading.Thread(
+                target=self._run_evolution,
+                daemon=True
+            )
+        
         self._evolution_thread.start()
     
     def stop_evolution(self):
@@ -495,6 +615,56 @@ class PlateDesignerViewModel:
             self._set_error(str(e))
         
         self._update_queue.put(True)
+    
+    def _run_nsga2_evolution(self):
+        """Run pymoo NSGA-II optimization in background thread."""
+        try:
+            with self._lock:
+                self._state.phase = EvolutionPhase.EVOLVING
+            
+            # Run NSGA-II (blocking call)
+            result: PymooResult = self._pymoo_optimizer.run(verbose=True)
+            
+            # Get best balanced solution from Pareto front
+            if result.pareto_genomes:
+                # Use preference-based selection (balance all objectives)
+                best_idx = result.get_best_balanced_index()
+                best_genome = result.pareto_genomes[best_idx]
+                best_fitness = result.pareto_fitness[best_idx]
+                
+                with self._lock:
+                    self._state.best_genome = best_genome
+                    self._state.best_fitness = best_fitness
+                    self._state.best_fitness_value = best_fitness.total_fitness
+                    self._state.phase = EvolutionPhase.CONVERGED
+                    self._state.elapsed_time = result.elapsed_time
+                    self._state.generation = result.n_generations
+                    
+                    # Store Pareto front info
+                    self._pareto_result = result
+                    
+                    # Log Pareto front
+                    n_pareto = len(result.pareto_genomes)
+                    self._state.evolution_logs.append(
+                        f"✅ NSGA-II: {n_pareto} Pareto-optimal solutions found"
+                    )
+                    self._state.log_count += 1
+            
+            self._state.is_running = False
+            
+        except Exception as e:
+            import traceback
+            error_details = f"{str(e)}\n{traceback.format_exc()}"
+            print(f"[NSGA-II Error] {error_details}")
+            self._set_error(str(e))
+        
+        self._update_queue.put(True)
+    
+    def get_pareto_front(self) -> Optional[List[PlateGenome]]:
+        """Get all Pareto-optimal solutions (only after NSGA-II run)."""
+        if hasattr(self, '_pareto_result') and self._pareto_result is not None:
+            return self._pareto_result.pareto_genomes
+        return None
     
     def poll_updates(self) -> bool:
         """
@@ -630,6 +800,80 @@ class PlateDesignerViewModel:
             "spine_coupling": [s.spine_coupling for s in history],
             "low_mass": [s.low_mass for s in history],
         }
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # EVOLUTION LOGGING - Physics-driven debugging
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    def get_evolution_logs(self, n: int = 30, category: Optional[str] = None) -> List[str]:
+        """
+        Get recent evolution logs for UI display.
+        
+        Args:
+            n: Number of recent logs to return
+            category: Filter by category (zone_priority, modal_analysis, 
+                      cutout_placement, fitness, generation, physics_decision)
+        
+        Returns:
+            List of formatted log strings with timestamps
+        """
+        return get_formatted_logs(n=n, category=category)
+    
+    def get_evolution_summary(self) -> str:
+        """Get a human-readable summary of the evolution process."""
+        return generate_evolution_summary()
+    
+    def clear_evolution_logs(self):
+        """Clear all evolution logs (for new optimization run)."""
+        handler = get_evolution_handler()
+        handler.clear()
+        with self._lock:
+            self._state.evolution_logs = []
+            self._state.log_count = 0
+    
+    def log_target_comparison(self):
+        """
+        Log comparison between achieved and target metrics.
+        
+        Targets (from research):
+        - Spine: < 10dB variation (Sum & Pan 2000)
+        - Head: < 6dB variation (Lu 2012)  
+        - Ear L/R: > 90% uniformity
+        """
+        if self._state.best_fitness is None:
+            return
+        
+        f = self._state.best_fitness
+        
+        # Calculate achieved values (approximate from scores)
+        # Score 1.0 = 0dB variation, Score 0.5 = target variation
+        spine_achieved = (1.0 - f.spine_flatness_score) * 20.0  # Rough dB estimate
+        head_achieved = (1.0 - f.head_flatness_score) * 12.0
+        ear_achieved = f.ear_uniformity_score
+        
+        log_comparison_with_target(
+            spine_target_db=10.0,
+            spine_achieved_db=spine_achieved,
+            head_target_db=6.0,
+            head_achieved_db=head_achieved,
+            ear_target_uniformity=0.90,
+            ear_achieved_uniformity=ear_achieved,
+            logger=evo_logger
+        )
+    
+    def register_log_callback(self, callback: Callable[[Dict], None]):
+        """
+        Register callback to be notified on new log entries.
+        
+        Useful for real-time log display in UI.
+        """
+        handler = get_evolution_handler()
+        handler.add_callback(callback)
+    
+    def unregister_log_callback(self, callback: Callable[[Dict], None]):
+        """Unregister log callback."""
+        handler = get_evolution_handler()
+        handler.remove_callback(callback)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
