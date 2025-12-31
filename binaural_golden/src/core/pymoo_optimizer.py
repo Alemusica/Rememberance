@@ -43,7 +43,7 @@ except ImportError:
 # Local imports
 from .person import Person
 from .plate_genome import PlateGenome, ContourType, ExciterPosition, CutoutGene
-from .fitness import FitnessEvaluator, FitnessResult, ObjectiveWeights, ZoneWeights
+from .fitness import FitnessEvaluator, FitnessResult, ObjectiveWeights, ZoneWeights, ObjectiveVector
 
 
 @dataclass
@@ -97,14 +97,26 @@ class PlateOptimizationProblem(PymooProblem):
     - x[7]: exciter2_y (0-1)
     - x[8]: exciter2_diameter (normalized)
     
-    Objectives (all minimized):
-    - f[0]: -ear_uniformity (L/R balance, want high → minimize negative)
-    - f[1]: -spine_flatness (want high → minimize negative)
-    - f[2]: -ear_flatness (want high → minimize negative)
+    Objectives (all minimized) - 6D ObjectiveVector:
+    - f[0]: -spine_flatness (want high → minimize negative)
+    - f[1]: -ear_flatness (want high → minimize negative)
+    - f[2]: -ear_lr_uniformity (L/R balance, want high → minimize negative)
+    - f[3]: -spine_energy (want high → minimize negative)
+    - f[4]: -mass_score (lighter is better → minimize negative)
+    - f[5]: -structural_safety (deflection constraint → minimize negative)
     
     Constraints:
     - g[0]: deflection_mm - 10.0 <= 0 (structural safety)
     """
+    
+    # Number of objectives in ObjectiveVector
+    N_OBJECTIVES = 6
+    
+    # Objective names for Pareto front analysis
+    OBJECTIVE_NAMES = [
+        "spine_flatness", "ear_flatness", "ear_lr_uniformity",
+        "spine_energy", "mass_score", "structural_safety"
+    ]
     
     def __init__(
         self,
@@ -126,17 +138,17 @@ class PlateOptimizationProblem(PymooProblem):
         xl = np.zeros(n_var)
         xu = np.ones(n_var)
         
-        # Initialize pymoo Problem
+        # Initialize pymoo Problem with 6 objectives from ObjectiveVector
         super().__init__(
             n_var=n_var,
-            n_obj=3,           # ear_uniformity, spine_flatness, ear_flatness
-            n_ieq_constr=1,    # structural deflection constraint
+            n_obj=self.N_OBJECTIVES,  # 6D multi-objective from ObjectiveVector
+            n_ieq_constr=1,           # structural deflection constraint
             xl=xl,
             xu=xu,
         )
         
         # Cache for evaluation results
-        self._eval_cache: Dict[str, Tuple[np.ndarray, np.ndarray, FitnessResult]] = {}
+        self._eval_cache: Dict[str, Tuple[np.ndarray, np.ndarray, FitnessResult, ObjectiveVector]] = {}
     
     def _decode_genome(self, x: np.ndarray) -> PlateGenome:
         """
@@ -177,7 +189,7 @@ class PlateOptimizationProblem(PymooProblem):
     
     def _evaluate(self, x: np.ndarray, out: Dict, *args, **kwargs):
         """
-        Evaluate population of solutions.
+        Evaluate population of solutions using 6D ObjectiveVector.
         
         Args:
             x: Population matrix (pop_size x n_var)
@@ -185,8 +197,8 @@ class PlateOptimizationProblem(PymooProblem):
         """
         pop_size = x.shape[0]
         
-        # Objectives (minimize)
-        F = np.zeros((pop_size, 3))
+        # 6D Objectives (minimize) from ObjectiveVector
+        F = np.zeros((pop_size, self.N_OBJECTIVES))
         
         # Constraints (g <= 0 is feasible)
         G = np.zeros((pop_size, 1))
@@ -194,24 +206,15 @@ class PlateOptimizationProblem(PymooProblem):
         for i in range(pop_size):
             genome = self._decode_genome(x[i])
             
-            # Evaluate fitness
-            result = self.evaluator.evaluate(genome)
+            # ═══════════════════════════════════════════════════════════════════
+            # EVALUATE WITH MULTI-OBJECTIVE (returns FitnessResult + ObjectiveVector)
+            # ═══════════════════════════════════════════════════════════════════
+            result, obj_vector = self.evaluator.evaluate_multi(genome)
             
             # ═══════════════════════════════════════════════════════════════════
-            # OBJECTIVE 1: Ear L/R Uniformity (MAXIMIZE → minimize negative)
+            # 6D OBJECTIVE VECTOR (all negated for minimization)
             # ═══════════════════════════════════════════════════════════════════
-            ear_uniformity = self._compute_ear_uniformity(result)
-            F[i, 0] = -ear_uniformity  # Negate to minimize
-            
-            # ═══════════════════════════════════════════════════════════════════
-            # OBJECTIVE 2: Spine Flatness (MAXIMIZE → minimize negative)
-            # ═══════════════════════════════════════════════════════════════════
-            F[i, 1] = -result.spine_flatness_score
-            
-            # ═══════════════════════════════════════════════════════════════════
-            # OBJECTIVE 3: Ear Flatness (MAXIMIZE → minimize negative)
-            # ═══════════════════════════════════════════════════════════════════
-            F[i, 2] = -result.head_flatness_score
+            F[i, :] = obj_vector.to_minimize_array()
             
             # ═══════════════════════════════════════════════════════════════════
             # CONSTRAINT: Structural Deflection < 10mm
@@ -365,10 +368,14 @@ class PymooOptimizer:
         if mutation_prob is None:
             mutation_prob = 1.0 / self.problem.n_var
         
+        # Number of objectives (6D from ObjectiveVector)
+        n_obj = PlateOptimizationProblem.N_OBJECTIVES
+        
         # Create algorithm
         if cfg.algorithm == "nsga3":
-            # NSGA-III needs reference directions
-            ref_dirs = get_reference_directions("das-dennis", 3, n_partitions=12)
+            # NSGA-III needs reference directions - more partitions for 6D
+            # For 6 objectives, use layered approach to avoid explosion
+            ref_dirs = get_reference_directions("das-dennis", n_obj, n_partitions=4)
             algorithm = NSGA3(
                 pop_size=cfg.population_size,
                 ref_dirs=ref_dirs,
@@ -387,11 +394,11 @@ class PymooOptimizer:
             )
         
         if verbose:
-            print(f"Starting {cfg.algorithm.upper()} optimization:")
+            print(f"Starting {cfg.algorithm.upper()} 6D optimization:")
             print(f"  Population: {cfg.population_size}")
             print(f"  Generations: {cfg.n_generations}")
             print(f"  Decision vars: {self.problem.n_var}")
-            print(f"  Objectives: ear_uniformity, spine_flatness, ear_flatness")
+            print(f"  Objectives (6D): {', '.join(PlateOptimizationProblem.OBJECTIVE_NAMES)}")
         
         start_time = time.time()
         
@@ -443,30 +450,31 @@ class PymooResult:
     """
     Result from multi-objective optimization.
     
-    Contains Pareto front and utilities for selection.
+    Contains 6D Pareto front from ObjectiveVector:
+    - spine_flatness, ear_flatness, ear_lr_uniformity
+    - spine_energy, mass_score, structural_safety
     """
     pareto_genomes: List[PlateGenome]
     pareto_fitness: List[FitnessResult]
-    pareto_objectives: np.ndarray  # (n_solutions, 3): ear_uni, spine_flat, ear_flat
+    pareto_objectives: np.ndarray  # (n_solutions, 6) from ObjectiveVector
     elapsed_time: float
     n_generations: int
     algorithm: str
     
+    # 6D objective names matching ObjectiveVector order
+    OBJECTIVE_NAMES = PlateOptimizationProblem.OBJECTIVE_NAMES
+    
     def get_best_by_preference(
         self,
-        ear_uniformity_weight: float = 0.5,
-        spine_flatness_weight: float = 0.3,
-        ear_flatness_weight: float = 0.2,
+        weights: Optional[Dict[str, float]] = None,
     ) -> Tuple[PlateGenome, FitnessResult]:
         """
-        Select best solution based on preference weights.
-        
-        Weighted sum scalarization of Pareto front.
+        Select best solution based on preference weights for 6D objectives.
         
         Args:
-            ear_uniformity_weight: Weight for L/R balance (default 0.5 - highest!)
-            spine_flatness_weight: Weight for spine response
-            ear_flatness_weight: Weight for ear response
+            weights: Dict mapping objective names to weights, e.g.:
+                {"spine_flatness": 0.2, "ear_lr_uniformity": 0.5, "spine_energy": 0.3}
+                Missing objectives default to 0.
         
         Returns:
             (best_genome, best_fitness)
@@ -474,44 +482,72 @@ class PymooResult:
         if len(self.pareto_genomes) == 0:
             raise ValueError("No Pareto solutions available")
         
-        # Normalize weights
-        total = ear_uniformity_weight + spine_flatness_weight + ear_flatness_weight
-        w = np.array([
-            ear_uniformity_weight / total,
-            spine_flatness_weight / total,
-            ear_flatness_weight / total,
-        ])
+        # Default weights if not provided (prioritize ear balance)
+        if weights is None:
+            weights = {
+                "spine_flatness": 0.15,
+                "ear_flatness": 0.15,
+                "ear_lr_uniformity": 0.40,  # Highest priority!
+                "spine_energy": 0.15,
+                "mass_score": 0.05,
+                "structural_safety": 0.10,
+            }
         
-        # Weighted sum (objectives are already positive after negation)
+        # Build weight vector
+        w = np.array([weights.get(name, 0.0) for name in self.OBJECTIVE_NAMES])
+        
+        # Normalize
+        if w.sum() > 0:
+            w = w / w.sum()
+        else:
+            w = np.ones(len(self.OBJECTIVE_NAMES)) / len(self.OBJECTIVE_NAMES)
+        
+        # Weighted sum (objectives are already positive after negation in run())
         scores = self.pareto_objectives @ w
         
         best_idx = np.argmax(scores)
         
         return self.pareto_genomes[best_idx], self.pareto_fitness[best_idx]
     
+    def get_best_for_objective(self, objective_name: str) -> Tuple[PlateGenome, FitnessResult]:
+        """
+        Get solution with best value for a specific objective.
+        
+        Args:
+            objective_name: One of OBJECTIVE_NAMES
+        
+        Returns:
+            (best_genome, best_fitness)
+        """
+        if objective_name not in self.OBJECTIVE_NAMES:
+            raise ValueError(f"Unknown objective: {objective_name}. Valid: {self.OBJECTIVE_NAMES}")
+        
+        idx = self.OBJECTIVE_NAMES.index(objective_name)
+        best_idx = np.argmax(self.pareto_objectives[:, idx])
+        return self.pareto_genomes[best_idx], self.pareto_fitness[best_idx]
+    
     def get_best_ear_uniformity(self) -> Tuple[PlateGenome, FitnessResult]:
         """Get solution with best ear L/R uniformity."""
-        best_idx = np.argmax(self.pareto_objectives[:, 0])
-        return self.pareto_genomes[best_idx], self.pareto_fitness[best_idx]
+        return self.get_best_for_objective("ear_lr_uniformity")
     
     def get_best_spine_flatness(self) -> Tuple[PlateGenome, FitnessResult]:
         """Get solution with best spine flatness."""
-        best_idx = np.argmax(self.pareto_objectives[:, 1])
-        return self.pareto_genomes[best_idx], self.pareto_fitness[best_idx]
+        return self.get_best_for_objective("spine_flatness")
     
     def get_best_ear_flatness(self) -> Tuple[PlateGenome, FitnessResult]:
         """Get solution with best ear flatness."""
-        best_idx = np.argmax(self.pareto_objectives[:, 2])
-        return self.pareto_genomes[best_idx], self.pareto_fitness[best_idx]
+        return self.get_best_for_objective("ear_flatness")
     
     def get_knee_point(self) -> Tuple[PlateGenome, FitnessResult]:
         """
-        Find knee point of Pareto front (best trade-off).
+        Find knee point of 6D Pareto front (best trade-off).
         
-        Uses perpendicular distance from utopia-nadir line.
+        Uses perpendicular distance from utopia-nadir line in normalized space.
         """
         if len(self.pareto_objectives) <= 1:
             return self.pareto_genomes[0], self.pareto_fitness[0]
+        
+        n_obj = self.pareto_objectives.shape[1]  # Should be 6
         
         # Normalize objectives
         obj = self.pareto_objectives
@@ -521,10 +557,10 @@ class PymooResult:
         obj_range[obj_range < 1e-10] = 1.0
         obj_norm = (obj - obj_min) / obj_range
         
-        # Utopia point (max of each objective)
-        utopia = np.ones(3)
+        # Utopia point (max of each objective) in n_obj dimensions
+        utopia = np.ones(n_obj)
         # Nadir point (min of each objective)
-        nadir = np.zeros(3)
+        nadir = np.zeros(n_obj)
         
         # Line direction
         line_dir = utopia - nadir
@@ -551,7 +587,7 @@ class PymooResult:
     
     def get_best_balanced_index(self) -> int:
         """
-        Get index of best balanced solution (knee point).
+        Get index of best balanced solution (knee point) in 6D space.
         
         Returns:
             Index into pareto_genomes/pareto_fitness arrays
@@ -559,7 +595,9 @@ class PymooResult:
         if len(self.pareto_objectives) <= 1:
             return 0
         
-        # Use same knee-point algorithm
+        n_obj = self.pareto_objectives.shape[1]  # Should be 6
+        
+        # Use same knee-point algorithm for 6D
         obj = self.pareto_objectives
         obj_min = obj.min(axis=0)
         obj_max = obj.max(axis=0)
@@ -567,8 +605,8 @@ class PymooResult:
         obj_range[obj_range < 1e-10] = 1.0
         obj_norm = (obj - obj_min) / obj_range
         
-        utopia = np.ones(3)
-        nadir = np.zeros(3)
+        utopia = np.ones(n_obj)
+        nadir = np.zeros(n_obj)
         line_dir = utopia - nadir
         line_dir = line_dir / np.linalg.norm(line_dir)
         
@@ -587,11 +625,28 @@ class PymooResult:
         
         return knee_idx
     
+    def get_labeled_objectives(self, idx: int) -> Dict[str, float]:
+        """
+        Get labeled objective values for a specific Pareto solution.
+        
+        Args:
+            idx: Index into pareto_objectives
+        
+        Returns:
+            Dict with objective names and values, e.g.:
+            {"spine_flatness": 0.85, "ear_lr_uniformity": 0.92, ...}
+        """
+        if idx < 0 or idx >= len(self.pareto_objectives):
+            raise ValueError(f"Index {idx} out of range [0, {len(self.pareto_objectives)})")
+        
+        return {name: self.pareto_objectives[idx, i] 
+                for i, name in enumerate(self.OBJECTIVE_NAMES)}
+    
     def summary(self) -> str:
-        """Generate summary of optimization results."""
+        """Generate summary of 6D optimization results."""
         lines = [
             f"═══════════════════════════════════════════════════════════════",
-            f"  PYMOO {self.algorithm.upper()} Optimization Results",
+            f"  PYMOO {self.algorithm.upper()} 6D Optimization Results",
             f"═══════════════════════════════════════════════════════════════",
             f"  Generations: {self.n_generations}",
             f"  Time: {self.elapsed_time:.1f}s",
@@ -600,28 +655,32 @@ class PymooResult:
         ]
         
         if len(self.pareto_objectives) > 0:
-            lines.extend([
-                "  Objective Ranges (Pareto Front):",
-                f"    Ear Uniformity:  [{self.pareto_objectives[:, 0].min():.3f} - {self.pareto_objectives[:, 0].max():.3f}]",
-                f"    Spine Flatness:  [{self.pareto_objectives[:, 1].min():.3f} - {self.pareto_objectives[:, 1].max():.3f}]",
-                f"    Ear Flatness:    [{self.pareto_objectives[:, 2].min():.3f} - {self.pareto_objectives[:, 2].max():.3f}]",
-                "",
-            ])
+            lines.append("  Objective Ranges (6D Pareto Front):")
+            for i, name in enumerate(self.OBJECTIVE_NAMES):
+                obj_min = self.pareto_objectives[:, i].min()
+                obj_max = self.pareto_objectives[:, i].max()
+                lines.append(f"    {name:20s}: [{obj_min:.3f} - {obj_max:.3f}]")
+            lines.append("")
             
             # Best solutions
             best_ear, _ = self.get_best_ear_uniformity()
             best_spine, _ = self.get_best_spine_flatness()
             knee_genome, knee_fit = self.get_knee_point()
+            knee_idx = self.get_best_balanced_index()
+            knee_objectives = self.get_labeled_objectives(knee_idx)
             
             lines.extend([
                 "  Best Ear Uniformity Solution:",
                 f"    Plate: {best_ear.length:.2f}m x {best_ear.width:.2f}m",
                 f"    Exciters: {len(best_ear.exciters)}",
                 "",
-                "  Knee Point (Best Trade-off):",
+                "  Knee Point (Best 6D Trade-off):",
                 f"    Plate: {knee_genome.length:.2f}m x {knee_genome.width:.2f}m",
                 f"    Total Fitness: {knee_fit.total_fitness:.3f}",
+                "    Objectives:",
             ])
+            for name, value in knee_objectives.items():
+                lines.append(f"      {name:20s}: {value:.3f}")
         
         lines.append("═══════════════════════════════════════════════════════════════")
         
