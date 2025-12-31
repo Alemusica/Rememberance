@@ -173,6 +173,20 @@ except ImportError:
     pass
 
 # ══════════════════════════════════════════════════════════════════════════════
+# EVOLUTION PIPELINE - Unified integration of all phases
+# (Action Plan 3.0 Phase 7)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .evolution_pipeline import (
+        EvolutionPipeline, PipelineConfig, PipelineMode,
+        PipelineState, PipelineResult,
+        create_pipeline, run_quick_optimization,
+        get_component_summary
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PYMOO MULTI-OBJECTIVE OPTIMIZER (NSGA-II/NSGA-III)
 # ══════════════════════════════════════════════════════════════════════════════
 try:
@@ -246,6 +260,10 @@ __all__ = [
     'create_hybrid_template', 'create_meditation_template',
     'create_research_template',
     'get_template', 'list_available_templates', 'get_default_registry',
+    # Evolution Pipeline (Action Plan 3.0 Phase 7 - unified integration)
+    'EvolutionPipeline', 'PipelineConfig', 'PipelineMode',
+    'PipelineState', 'PipelineResult',
+    'create_pipeline', 'run_quick_optimization', 'get_component_summary',
     # Pymoo Multi-Objective Optimizer (NSGA-II/III for ear L/R balance)
     'PymooOptimizer', 'PymooConfig', 'PymooResult', 'PlateOptimizationProblem',
     'compute_ear_uniformity_from_result', 'PYMOO_AVAILABLE',
