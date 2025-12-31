@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
 from enum import Enum
 import copy
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Golden ratio
 PHI = (1 + np.sqrt(5)) / 2
@@ -1806,7 +1809,9 @@ class PlateGenome:
                 u_new = np.linspace(0, 1, n_points)
                 x_new, y_new = splev(u_new, tck)
                 base_points = np.column_stack([x_new, y_new])
-            except:
+            except (ValueError, TypeError) as e:
+                # Spline fitting failed, keep original points
+                logger.debug(f"Spline interpolation failed: {e}, keeping original points")
                 pass
         
         # Scala a dimensioni reali

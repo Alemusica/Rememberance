@@ -9,7 +9,10 @@ IMMEDIATELY without stopping playback - no glitches, smooth transitions.
 
 import numpy as np
 import threading
+import logging
 from typing import Optional, List
+
+logger = logging.getLogger(__name__)
 
 # PyAudio import
 try:
@@ -411,15 +414,17 @@ class AudioEngine:
             try:
                 self.stream.stop_stream()
                 self.stream.close()
-            except:
-                pass
+            except (OSError, IOError) as e:
+                # Stream may already be closed or in invalid state
+                logger.debug(f"Stream cleanup warning: {e}")
             self.stream = None
         
         if self.pyaudio_instance:
             try:
                 self.pyaudio_instance.terminate()
-            except:
-                pass
+            except (OSError, IOError) as e:
+                # PyAudio may already be terminated
+                logger.debug(f"PyAudio cleanup warning: {e}")
             self.pyaudio_instance = None
     
     def is_playing(self) -> bool:

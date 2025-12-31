@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional, Callable
 from enum import Enum
 import warnings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Golden ratio
 PHI = (1 + np.sqrt(5)) / 2  # ≈ 1.618034
@@ -501,7 +504,8 @@ def calculate_coupling_uniformity(
             try:
                 coupling = abs(mode.get_displacement_at(x, y))
                 total_response += coupling
-            except:
+            except (IndexError, ValueError, AttributeError) as e:
+                logger.debug(f"Mode coupling calculation failed at ({x}, {y}): {e}")
                 total_response += 0.5
         responses.append(total_response)
     

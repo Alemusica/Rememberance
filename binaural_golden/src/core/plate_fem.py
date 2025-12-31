@@ -14,6 +14,9 @@ from typing import List, Tuple, Dict, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 import warnings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Try to import FEM libraries
 try:
@@ -26,10 +29,13 @@ except ImportError:
 
 try:
     from scipy.sparse.linalg import eigsh
-    from scipy.spatial import Delaunay
+    from scipy.spatial import Delaunay, QhullError
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
+    # Fallback: QhullError may not be available
+    class QhullError(Exception):
+        pass
 
 # Import unified material definitions
 from .materials import Material, MATERIALS
@@ -283,7 +289,9 @@ def create_polygon_mesh(vertices: List[Tuple[float, float]], resolution: int = 2
     try:
         tri = Delaunay(points)
         triangles = tri.simplices
-    except:
+    except (ValueError, QhullError) as e:
+        # Fallback to rectangle mesh if triangulation fails (e.g., collinear points)
+        logger.debug(f"Delaunay triangulation failed: {e}, using rectangle mesh")
         return create_rectangle_mesh(max_x - min_x, max_y - min_y, resolution)
     
     return points, triangles
@@ -516,7 +524,8 @@ def calculate_exciter_coupling_fem(
         displacement = mode.get_displacement_at(exciter_x, exciter_y)
         # Normalize to [0, 1]
         return abs(displacement)
-    except:
+    except (IndexError, ValueError, AttributeError) as e:
+        logger.debug(f"Mode displacement interpolation failed at ({exciter_x}, {exciter_y}): {e}")
         return 0.5  # Default if interpolation fails
 
 
@@ -538,7 +547,8 @@ def calculate_optimal_phases_fem(
                 phases.append(0.0)
             else:
                 phases.append(180.0)
-        except:
+        except (IndexError, ValueError, AttributeError) as e:
+            logger.debug(f"Phase calculation failed at ({x}, {y}): {e}")
             phases.append(0.0)
     return phases
 

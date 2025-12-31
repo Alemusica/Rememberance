@@ -21,6 +21,9 @@ import numpy as np
 from typing import Tuple, List, Optional, Callable
 from dataclasses import dataclass
 import warnings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Try JAX import
 try:
@@ -39,9 +42,15 @@ except ImportError:
 try:
     from scipy.sparse.linalg import eigsh
     from scipy.sparse import csr_matrix
+    from scipy.sparse.linalg import ArpackNoConvergence, ArpackError
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
+    # Fallback: Arpack errors may not be available
+    class ArpackNoConvergence(Exception):
+        pass
+    class ArpackError(Exception):
+        pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -294,7 +303,8 @@ def _solve_eigenvalues_numpy(
         )
         idx = np.argsort(eigenvalues)
         return eigenvalues[idx][:n_modes], eigenvectors[:, idx][:, :n_modes]
-    except:
+    except (ArpackNoConvergence, ArpackError, ValueError) as e:
+        logger.warning(f"Sparse eigensolver failed: {e}, falling back to dense solver")
         eigenvalues = np.linalg.eigvalsh(K)
         return eigenvalues[:n_modes], np.eye(K.shape[0])[:, :n_modes]
 

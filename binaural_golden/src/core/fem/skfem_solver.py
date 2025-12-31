@@ -10,7 +10,10 @@
 import numpy as np
 import time
 import warnings
+import logging
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 from .interface import (
     FEMSolver, FEMResult, FEMMode, MeshData,
@@ -200,7 +203,8 @@ class SkfemSolver(FEMSolver):
             n = np.sum(np.diff(np.sign(line_y)) != 0) // 2 + 1
             
             return max(1, m), max(1, n)
-        except:
+        except (IndexError, ValueError) as e:
+            logger.debug(f"Mode number estimation failed: {e}")
             return 0, 0
     
     @classmethod
