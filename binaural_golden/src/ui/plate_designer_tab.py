@@ -1021,10 +1021,13 @@ class PlateDesignerTab(ttk.Frame):
         # Evolution canvas
         self._evolution_canvas.set_person(state.person)
         if state.best_genome:
+            # Disable animation during active evolution (causes lag)
+            # Only animate when evolution finishes
+            should_animate = not state.is_running
             self._evolution_canvas.set_plate(
                 state.best_genome, 
                 state.best_fitness,
-                animate=True
+                animate=should_animate
             )
         else:
             # Show default plate

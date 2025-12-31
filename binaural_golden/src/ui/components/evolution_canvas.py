@@ -107,6 +107,11 @@ class EvolutionCanvas(tk.Canvas):
         self._prev_genome: Optional[PlateGenome] = None
         self._animation_id: Optional[str] = None
         
+        # Throttling for rapid updates during evolution
+        self._last_draw_time: float = 0.0
+        self._pending_refresh_id: Optional[str] = None
+        self._min_draw_interval_ms: int = 100  # Max 10 FPS during evolution
+        
         # Display options
         self._show_grid = True
         self._show_human = True
@@ -187,9 +192,38 @@ class EvolutionCanvas(tk.Canvas):
         self._show_modes = show_modes
         self.refresh()
     
-    def refresh(self):
-        """Redraw canvas."""
+    def refresh(self, force: bool = False):
+        """
+        Redraw canvas with optional throttling.
+        
+        Args:
+            force: If True, bypass throttling and draw immediately
+        """
+        import time
+        current_time = time.time() * 1000  # ms
+        
+        # Throttle rapid updates during evolution
+        if not force:
+            time_since_last = current_time - self._last_draw_time
+            if time_since_last < self._min_draw_interval_ms:
+                # Schedule deferred refresh if not already pending
+                if self._pending_refresh_id is None:
+                    delay = int(self._min_draw_interval_ms - time_since_last)
+                    self._pending_refresh_id = self.after(delay, self._deferred_refresh)
+                return
+        
+        # Cancel any pending refresh
+        if self._pending_refresh_id is not None:
+            self.after_cancel(self._pending_refresh_id)
+            self._pending_refresh_id = None
+        
+        self._last_draw_time = current_time
         self._draw()
+    
+    def _deferred_refresh(self):
+        """Execute deferred refresh after throttle delay."""
+        self._pending_refresh_id = None
+        self.refresh(force=True)
     
     def export_image(self, filename: str):
         """Export canvas as PostScript (can convert to PNG)."""
