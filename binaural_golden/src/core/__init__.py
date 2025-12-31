@@ -131,6 +131,19 @@ except ImportError:
     pass
 
 # ══════════════════════════════════════════════════════════════════════════════
+# RDNN MEMORY - PyTorch recurrent memory with hidden state persistence
+# (Action Plan 3.0 Phase 4)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .rdnn_memory import (
+        RDNNMemory, RDNNModel, RDNNConfig, RDNNArchitecture,
+        RDNNObservation, RDNNPrediction,
+        ObservationBuilder, create_rdnn_memory
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PYMOO MULTI-OBJECTIVE OPTIMIZER (NSGA-II/NSGA-III)
 # ══════════════════════════════════════════════════════════════════════════════
 try:
@@ -189,6 +202,10 @@ __all__ = [
     'PokayokeObserver', 'AnomalyType', 'UserAction', 'AnomalyContext', 'UserDecision',
     'ObserverState', 'UserInteractionHandler', 'HeadlessHandler', 'CLIHandler',
     'create_observer',
+    # RDNN Memory (Action Plan 3.0 Phase 4 - PyTorch recurrent with warm start)
+    'RDNNMemory', 'RDNNModel', 'RDNNConfig', 'RDNNArchitecture',
+    'RDNNObservation', 'RDNNPrediction',
+    'ObservationBuilder', 'create_rdnn_memory',
     # Pymoo Multi-Objective Optimizer (NSGA-II/III for ear L/R balance)
     'PymooOptimizer', 'PymooConfig', 'PymooResult', 'PlateOptimizationProblem',
     'compute_ear_uniformity_from_result', 'PYMOO_AVAILABLE',
