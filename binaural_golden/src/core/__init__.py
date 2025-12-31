@@ -144,6 +144,18 @@ except ImportError:
     pass
 
 # ══════════════════════════════════════════════════════════════════════════════
+# LTM DISTILLATION - Long-term memory knowledge transfer
+# (Action Plan 3.0 Phase 5)
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from .ltm_distillation import (
+        LTMDistiller, DistilledKnowledge, DistillationType,
+        ExperienceStatistics, create_distiller, distill_and_apply
+    )
+except ImportError:
+    pass
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PYMOO MULTI-OBJECTIVE OPTIMIZER (NSGA-II/NSGA-III)
 # ══════════════════════════════════════════════════════════════════════════════
 try:
@@ -206,6 +218,9 @@ __all__ = [
     'RDNNMemory', 'RDNNModel', 'RDNNConfig', 'RDNNArchitecture',
     'RDNNObservation', 'RDNNPrediction',
     'ObservationBuilder', 'create_rdnn_memory',
+    # LTM Distillation (Action Plan 3.0 Phase 5 - knowledge transfer)
+    'LTMDistiller', 'DistilledKnowledge', 'DistillationType',
+    'ExperienceStatistics', 'create_distiller', 'distill_and_apply',
     # Pymoo Multi-Objective Optimizer (NSGA-II/III for ear L/R balance)
     'PymooOptimizer', 'PymooConfig', 'PymooResult', 'PlateOptimizationProblem',
     'compute_ear_uniformity_from_result', 'PYMOO_AVAILABLE',
