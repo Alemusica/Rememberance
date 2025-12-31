@@ -1658,15 +1658,16 @@ class PlateGenome:
                 from .cutout_placement import CutoutPlacementOptimizer, CutoutPurpose as ABHPurpose
                 
                 optimizer = CutoutPlacementOptimizer(
-                    length=self.length,
-                    width=self.width,
-                    thickness=self.thickness_base,
+                    plate_length=self.length,
+                    plate_width=self.width,
                 )
                 
                 # Get ABH suggestion for edge energy focusing
+                # Randomly choose target zone for variety
+                target_zone = np.random.choice(["spine", "ear", "both"])
                 suggestions = optimizer.suggest_for_abh_focusing(
-                    target_zone="spine",  # Focus on spine zone
-                    n_suggestions=1,
+                    target_zone=target_zone,
+                    use_spirals=np.random.random() < 0.5,  # 50% spiral shapes
                 )
                 
                 if suggestions:
@@ -1674,12 +1675,12 @@ class PlateGenome:
                     return {
                         "x": suggestion.x,
                         "y": suggestion.y,
-                        "width": suggestion.width,
-                        "height": suggestion.height,
+                        "width": suggestion.recommended_width,
+                        "height": suggestion.recommended_height,
                         "rotation": 0.0,
-                        "shape": suggestion.shape,
+                        "shape": suggestion.recommended_shape,
                         "corner_radius": 0.3,
-                        "aspect_bias": suggestion.width / max(suggestion.height, 0.01),
+                        "aspect_bias": suggestion.recommended_width / max(suggestion.recommended_height, 0.01),
                         "purpose": "abh_focus",
                         "confidence": suggestion.confidence,
                     }
