@@ -1,0 +1,194 @@
+# Domain Configuration Template
+# Copy this file to config/domain_config.yaml and customize
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DOMAIN SELECTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+domain:
+  name: "dml_plate"  # Options: dml_plate, singing_bowl, speaker_box, custom
+  adapter_path: "adapters.dml_plate"  # Python module path
+  
+  # Domain-specific imports
+  genome_class: "PlateGenome"
+  physics_class: "PlatePhysics"
+  evaluator_class: "PlateEvaluator"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EVOLUTION PARAMETERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+evolution:
+  algorithm: "nsga2"  # Options: nsga2, cma_es, genetic
+  
+  population_size: 50
+  n_generations: 100
+  
+  # Mutation parameters
+  mutation_sigma: 0.1
+  mutation_decay: 0.995  # Per generation
+  
+  # Crossover
+  crossover_probability: 0.8
+  
+  # Selection
+  tournament_size: 3
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CURRICULUM LEARNING (GenePhase)
+# ══════════════════════════════════════════════════════════════════════════════
+
+curriculum:
+  enabled: true
+  
+  # Phase transitions
+  phases:
+    - name: "SEED"
+      generations: 20
+      description: "Position-only mutations"
+    - name: "BLOOM"
+      generations: 50
+      description: "Full parameter mutations"
+    - name: "FREEZE"
+      generations: 30
+      description: "Fine-tuning only"
+  
+  # Adaptive transitions
+  adaptive:
+    enabled: true
+    stall_threshold: 10  # Generations without improvement
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MEMORY SYSTEM
+# ══════════════════════════════════════════════════════════════════════════════
+
+memory:
+  # Short-term memory
+  stm:
+    enabled: true
+    buffer_sizes: [3, 5, 10]
+    store_genomes: false
+  
+  # Long-term memory
+  ltm:
+    enabled: true
+    path: "./ltm_storage"
+    distill_on_complete: true
+    min_runs_for_distillation: 3
+  
+  # RDNN trajectory predictor
+  rdnn:
+    enabled: false  # Requires PyTorch
+    architecture: "gru"
+    hidden_size: 64
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POKAYOKE OBSERVER (Anomaly Detection)
+# ══════════════════════════════════════════════════════════════════════════════
+
+observer:
+  enabled: true
+  mode: "headless"  # Options: headless, interactive, monitored
+  
+  # Thresholds
+  fitness_stall_threshold: 10
+  anomaly_sensitivity: 0.5
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OBJECTIVES (Multi-Objective)
+# ══════════════════════════════════════════════════════════════════════════════
+
+objectives:
+  # Define which objectives to optimize
+  # Each objective maps to a method in FitnessEvaluator
+  
+  minimize:
+    - name: "response_variation"
+      weight: 1.0
+      target: 6.0  # dB
+  
+  maximize:
+    - name: "zone_coupling"
+      weight: 1.0
+      target: 0.9
+    - name: "uniformity"
+      weight: 1.0
+      target: 0.95
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PARALLELIZATION (Optional)
+# ══════════════════════════════════════════════════════════════════════════════
+
+parallel:
+  enabled: false
+  backend: "multiprocessing"  # Options: multiprocessing, ray, joblib
+  n_workers: -1  # -1 = all CPUs
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOGGING & CHECKPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+logging:
+  level: "INFO"
+  log_every_n_generations: 5
+  
+  # Checkpoints
+  save_checkpoints: true
+  checkpoint_dir: "./checkpoints"
+  checkpoint_interval: 10
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DOMAIN-SPECIFIC SETTINGS (Override per domain)
+# ══════════════════════════════════════════════════════════════════════════════
+
+dml_plate:
+  # Plate dimensions
+  length: 1.85  # meters
+  width: 0.64   # meters
+  thickness: 0.015  # meters
+  
+  # Exciters
+  n_exciters: 4
+  exciter_model: "dayton_daex25"
+  
+  # Zones
+  zones:
+    ear_left: [0.85, 0.2, 0.95, 0.4]   # [y_min, x_min, y_max, x_max]
+    ear_right: [0.85, 0.6, 0.95, 0.8]
+    spine: [0.3, 0.4, 0.7, 0.6]
+  
+  # Frequency targets
+  frequencies:
+    ear: [20, 8000]  # Hz
+    spine: [0, 300]  # Hz
+
+
+singing_bowl:
+  # Bowl geometry
+  diameter: 0.15  # meters
+  height: 0.08    # meters
+  wall_thickness: 0.003  # meters
+  
+  # Target frequencies (harmonic ratios)
+  fundamental: 200  # Hz
+  harmonic_ratios: [2.0, 3.0, 4.0]  # Overtone ratios
+
+
+speaker_box:
+  # Enclosure
+  volume: 0.020  # m³
+  
+  # Driver
+  driver_diameter: 0.165  # 6.5"
+  
+  # Target response
+  f3: 50  # -3dB point (Hz)
+  flatness_tolerance: 3.0  # dB
