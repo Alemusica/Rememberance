@@ -11,8 +11,12 @@ Penalizes:
 - Plates too short for the person
 """
 
+import logging
 import numpy as np
 from typing import Dict, Any
+
+# Logger per debug - controllabile via logging level
+logger = logging.getLogger(__name__)
 
 from .protocol import ScorerBase, ScorerResult
 
@@ -100,8 +104,13 @@ class ManufacturabilityScorer(ScorerBase):
             score -= 0.1
             penalties['aspect_ratio'] = 0.1
         
+        final_score = float(max(0, min(1, score)))
+        logger.debug("Manufacturability: cuts=%d, h=%.3fm, aspect=%.1f, penalties=%s",
+                    n_cuts, h, aspect, list(penalties.keys()))
+        logger.info("Manufacturability score: %.3f", final_score)
+        
         return ScorerResult(
-            score=float(max(0, min(1, score))),
+            score=final_score,
             name=self.name,
             weight=self.weight,
             details={

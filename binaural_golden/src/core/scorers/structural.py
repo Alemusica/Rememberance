@@ -145,6 +145,10 @@ class StructuralScorer(ScorerBase):
                 0.1 * (peninsula_net + 1) / 2  # Normalize peninsula_net to [0, 1]
             )
             
+            logger.debug("Structural: defl=%.3fmm (score=%.3f), safety=%.3f, peninsula=%.3f",
+                        defl_result.max_deflection_mm, defl_score, safety_score, peninsula_net)
+            logger.info("Structural score: %.3f", final_score)
+            
             return ScorerResult(
                 score=float(np.clip(final_score, 0, 1)),
                 name=self.name,

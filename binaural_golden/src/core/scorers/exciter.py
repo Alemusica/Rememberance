@@ -12,8 +12,12 @@ Hardware: 4× Dayton DAEX25 (25mm, 40W, 8Ω) via JAB4 WONDOM
 Reference: Bai & Liu 2004 - Genetic algorithm for exciter placement
 """
 
+import logging
 import numpy as np
 from typing import Dict, Any, List
+
+# Logger per debug - controllabile via logging level
+logger = logging.getLogger(__name__)
 
 from .protocol import ScorerBase, ScorerResult
 
@@ -102,8 +106,13 @@ class ExciterScorer(ScorerBase):
         max_possible = sum(1.0 / (i + 1) for i in range(n_modes))
         score = total_coupling / max_possible if max_possible > 0 else 0.5
         
+        final_score = float(np.clip(score, 0, 1))
+        logger.debug("Exciter coupling: %d exciters on %d modes, coupling=%.3f/%.3f",
+                    len(genome.exciters), n_modes, total_coupling, max_possible)
+        logger.info("Exciter placement score: %.3f", final_score)
+        
         return ScorerResult(
-            score=float(np.clip(score, 0, 1)),
+            score=final_score,
             name=self.name,
             weight=self.weight,
             details={

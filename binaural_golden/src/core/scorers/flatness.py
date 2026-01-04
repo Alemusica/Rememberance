@@ -5,8 +5,12 @@ Evaluates how flat the frequency response is in each zone (spine, head).
 Target: < 6dB variation for high-quality vibroacoustic therapy.
 """
 
+import logging
 import numpy as np
 from typing import Dict, Any
+
+# Logger per debug - controllabile via logging level
+logger = logging.getLogger(__name__)
 
 from .protocol import ScorerBase, ScorerResult
 
@@ -78,6 +82,10 @@ class ZoneFlatnessScorer(ScorerBase):
         
         # Weighted combination
         combined_score = spine_weight * spine_score + head_weight * head_score
+        
+        logger.debug("Zone flatness: spine=%.3f (w=%.2f), head=%.3f (w=%.2f)",
+                    spine_score, spine_weight, head_score, head_weight)
+        logger.info("Zone flatness score: %.3f", combined_score)
         
         return ScorerResult(
             score=combined_score,

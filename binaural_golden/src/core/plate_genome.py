@@ -1179,30 +1179,12 @@ class PlateGenome:
         new_genome = copy.deepcopy(self)
         
         # ═══════════════════════════════════════════════════════════════════════
-        # SYMMETRIC CUTOUTS
+        # SYMMETRIC CUTOUTS - PERFECT SYMMETRY (no duplication!)
         # ═══════════════════════════════════════════════════════════════════════
-        symmetric_cutouts = []
-        for cutout in self.cutouts:
-            # Keep original
-            symmetric_cutouts.append(cutout)
-            
-            # If not on centerline, add mirrored version
-            if abs(cutout.x - 0.5) > 0.05:  # More than 5% from center
-                mirrored = CutoutGene(
-                    x=1.0 - cutout.x,
-                    y=cutout.y,
-                    width=cutout.width,
-                    height=cutout.height,
-                    rotation=-cutout.rotation,  # Mirror rotation
-                    shape=cutout.shape,
-                    corner_radius=cutout.corner_radius,
-                    aspect_bias=cutout.aspect_bias,
-                    control_points=self._mirror_control_points(cutout.control_points) if cutout.control_points is not None else None,
-                )
-                # Only add if we have room
-                if len(symmetric_cutouts) < self.max_cutouts:
-                    symmetric_cutouts.append(mirrored)
+        # For symmetric shapes, pair cutouts by Y position and enforce
+        # perfect X symmetry. This ensures L/R cutouts are EXACTLY mirrored.
         
+        symmetric_cutouts = self._enforce_perfect_cutout_symmetry(list(self.cutouts))
         new_genome.cutouts = symmetric_cutouts[:self.max_cutouts]
         
         # ═══════════════════════════════════════════════════════════════════════
@@ -1325,14 +1307,16 @@ class PlateGenome:
                 if left_x > 0.35:
                     left_x = 0.15  # Force to edge for corners
                 
-                # Use left spring's Y for both (preserve structural position)
+                # PERFECT SYMMETRY: Use same Y for both springs (average)
+                y_symmetric = (left.y + right.y) / 2
+                
                 result.append(SpringSupportGene(
-                    x=left_x, y=left.y,  # PRESERVE Y!
+                    x=left_x, y=y_symmetric,  # SAME Y for both!
                     stiffness_n_m=left.stiffness_n_m,
                     damping_ratio=left.damping_ratio,
                 ))
                 result.append(SpringSupportGene(
-                    x=1.0 - left_x, y=right.y,  # PRESERVE Y!
+                    x=1.0 - left_x, y=y_symmetric,  # SAME Y for both!
                     stiffness_n_m=right.stiffness_n_m,
                     damping_ratio=right.damping_ratio,
                 ))
@@ -1344,13 +1328,16 @@ class PlateGenome:
                     right = sorted_springs[-(i+1)]
                     left_x = min(left.x, 0.45)
                     
+                    # PERFECT SYMMETRY: Use same Y for both springs (average)
+                    y_symmetric = (left.y + right.y) / 2
+                    
                     result.append(SpringSupportGene(
-                        x=left_x, y=left.y,  # PRESERVE Y!
+                        x=left_x, y=y_symmetric,  # SAME Y for both!
                         stiffness_n_m=left.stiffness_n_m,
                         damping_ratio=left.damping_ratio,
                     ))
                     result.append(SpringSupportGene(
-                        x=1.0 - left_x, y=right.y,  # PRESERVE Y!
+                        x=1.0 - left_x, y=y_symmetric,  # SAME Y for both!
                         stiffness_n_m=right.stiffness_n_m,
                         damping_ratio=right.damping_ratio,
                     ))
@@ -1398,6 +1385,103 @@ class PlateGenome:
         mirrored = points.copy()
         mirrored[:, 0] = -mirrored[:, 0]  # Flip x coordinates
         return mirrored
+
+    def _enforce_perfect_cutout_symmetry(self, cutouts: list) -> list:
+        """
+        Enforce PERFECT bilateral symmetry for cutouts.
+        
+        For symmetric plate shapes (rectangle, ellipse), cutouts must be
+        EXACTLY mirrored around x=0.5. This is physically necessary because:
+        - 1 million generations will converge to symmetric anyway (optimal)
+        - Symmetric cutouts = symmetric modal response = better ear_uniformity
+        - Manufacturing: symmetric CNC paths are more efficient
+        
+        Algorithm:
+        1. Separate cutouts into left (x < 0.5), center, and right (x > 0.5)
+        2. Pair left/right by similar Y position
+        3. For each pair, make X perfectly symmetric: x_right = 1.0 - x_left
+        4. Also synchronize width, height, rotation (mirrored)
+        
+        Returns:
+            List of cutouts with perfect bilateral symmetry
+        """
+        if not cutouts:
+            return []
+        
+        # Separate by position
+        left_cuts = [c for c in cutouts if c.x < 0.45]
+        center_cuts = [c for c in cutouts if 0.45 <= c.x <= 0.55]
+        right_cuts = [c for c in cutouts if c.x > 0.55]
+        
+        # Sort by Y for pairing
+        left_cuts.sort(key=lambda c: c.y)
+        right_cuts.sort(key=lambda c: c.y)
+        
+        result = []
+        
+        # Pair left and right by Y position
+        n_pairs = min(len(left_cuts), len(right_cuts))
+        for i in range(n_pairs):
+            left = left_cuts[i]
+            right = right_cuts[i]
+            
+            # Use left cutout's properties, mirror for right
+            # PERFECT symmetry: x_right = 1.0 - x_left
+            x_sym = left.x  # Use left's X as reference
+            y_avg = (left.y + right.y) / 2  # Average Y for both
+            
+            # Left cutout (keep original X, use averaged Y)
+            result.append(CutoutGene(
+                x=x_sym,
+                y=y_avg,
+                width=left.width,
+                height=left.height,
+                rotation=left.rotation,
+                shape=left.shape,
+                corner_radius=left.corner_radius,
+                aspect_bias=left.aspect_bias,
+                control_points=left.control_points,
+                tool_diameter_mm=left.tool_diameter_mm,
+                arc_radius=left.arc_radius,
+                arc_angle=left.arc_angle,
+            ))
+            
+            # Right cutout: EXACT mirror
+            result.append(CutoutGene(
+                x=1.0 - x_sym,  # PERFECT mirror
+                y=y_avg,        # Same Y as left
+                width=left.width,  # Same dimensions
+                height=left.height,
+                rotation=-left.rotation,  # Mirror rotation
+                shape=left.shape,
+                corner_radius=left.corner_radius,
+                aspect_bias=left.aspect_bias,
+                control_points=self._mirror_control_points(left.control_points) if left.control_points is not None else None,
+                tool_diameter_mm=left.tool_diameter_mm,
+                arc_radius=left.arc_radius,
+                arc_angle=left.arc_angle,
+            ))
+        
+        # Handle unpaired cuts (odd numbers): center them
+        for c in left_cuts[n_pairs:]:
+            result.append(CutoutGene(
+                x=0.5, y=c.y, width=c.width, height=c.height,
+                rotation=np.pi/2,  # Perpendicular for centered
+                shape=c.shape, corner_radius=c.corner_radius,
+                aspect_bias=c.aspect_bias, tool_diameter_mm=c.tool_diameter_mm,
+            ))
+        for c in right_cuts[n_pairs:]:
+            result.append(CutoutGene(
+                x=0.5, y=c.y, width=c.width, height=c.height,
+                rotation=np.pi/2,
+                shape=c.shape, corner_radius=c.corner_radius,
+                aspect_bias=c.aspect_bias, tool_diameter_mm=c.tool_diameter_mm,
+            ))
+        
+        # Add center cuts unchanged
+        result.extend(center_cuts)
+        
+        return result
 
     # ─────────────────────────────────────────────────────────────────────────
     # STRUCTURAL SUPPORT ENFORCEMENT

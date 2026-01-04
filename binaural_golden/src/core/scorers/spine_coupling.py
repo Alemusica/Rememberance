@@ -7,8 +7,12 @@ Higher coupling = better therapeutic effect for VAT (Vibroacoustic Therapy).
 Target: Uniform, high-level response across all spine points.
 """
 
+import logging
 import numpy as np
 from typing import Dict, Any
+
+# Logger per debug - controllabile via logging level
+logger = logging.getLogger(__name__)
 
 from .protocol import ScorerBase, ScorerResult
 
@@ -74,8 +78,13 @@ class SpineCouplingScorer(ScorerBase):
         # Level score (arbitrary scaling to [0, 1])
         level_score = np.clip(mean_response * 2, 0, 1)
         
+        logger.debug("Spine coupling: mean=%.3f, cv=%.3f, uniformity=%.3f",
+                    mean_response, cv, uniformity)
+        
         # Combined score
         coupling_score = 0.6 * level_score + 0.4 * uniformity
+        
+        logger.info("Spine coupling score: %.3f", coupling_score)
         
         return ScorerResult(
             score=float(coupling_score),

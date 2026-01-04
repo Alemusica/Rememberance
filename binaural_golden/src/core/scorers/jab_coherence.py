@@ -26,10 +26,14 @@
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
+import logging
 import numpy as np
 from typing import Dict, Any, Optional, List
 
 from .protocol import ScorerBase, ScorerResult
+
+# Logger per debug - configurabile via logging.getLogger(__name__).setLevel()
+logger = logging.getLogger(__name__)
 
 
 class JABCoherenceScorer(ScorerBase):
@@ -87,6 +91,8 @@ class JABCoherenceScorer(ScorerBase):
             ScorerResult with JAB coherence score and detailed breakdown
         """
         if not hasattr(genome, 'exciters') or len(genome.exciters) < 2:
+            logger.debug("JAB: insufficient exciters (%d), returning neutral",
+                        len(getattr(genome, 'exciters', [])))
             return ScorerResult(
                 score=0.5,  # Neutral if no exciters
                 name=self.name,
@@ -97,12 +103,17 @@ class JABCoherenceScorer(ScorerBase):
         # Group exciters by channel
         exciters = genome.exciters
         ch_map = self._group_by_channel(exciters)
+        logger.debug("JAB: grouped %d exciters into %d channels", 
+                    len(exciters), len([k for k in ch_map if ch_map[k]]))
         
         # Calculate each metric
         same_side_coherence = self._score_same_side_coherence(ch_map)
         lr_balance = self._score_lr_balance(ch_map)
         delay_alignment = self._score_delay_alignment(ch_map)
         gain_balance = self._score_gain_balance(ch_map)
+        
+        logger.debug("JAB metrics: same_side=%.3f, lr=%.3f, delay=%.3f, gain=%.3f",
+                    same_side_coherence, lr_balance, delay_alignment, gain_balance)
         
         # Combined score: 40% same-side + 30% L/R + 20% delay + 10% gain
         total_score = (
@@ -111,6 +122,8 @@ class JABCoherenceScorer(ScorerBase):
             0.20 * delay_alignment +
             0.10 * gain_balance
         )
+        
+        logger.info("JAB coherence score: %.3f (mode=%s)", total_score, self.binaural_mode)
         
         return ScorerResult(
             score=float(np.clip(total_score, 0.0, 1.0)),

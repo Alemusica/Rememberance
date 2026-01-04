@@ -7,8 +7,12 @@ L/R imbalance causes localization errors and reduces therapy effectiveness.
 Target: > 90% uniformity for therapeutic applications.
 """
 
+import logging
 import numpy as np
 from typing import Dict, Any
+
+# Logger per debug - controllabile via logging level
+logger = logging.getLogger(__name__)
 
 from .protocol import ScorerBase, ScorerResult
 
@@ -85,8 +89,13 @@ class EarUniformityScorer(ScorerBase):
         correlation = self._calculate_correlation(left_ear, right_ear)
         spectral_match = self._calculate_spectral_match(left_ear, right_ear)
         
+        logger.debug("Ear uniformity metrics: level=%.3f, corr=%.3f, spectral=%.3f",
+                    level_balance, correlation, spectral_match)
+        
         # Combined score: 50% level + 25% correlation + 25% spectral
         uniformity = 0.50 * level_balance + 0.25 * correlation + 0.25 * spectral_match
+        
+        logger.info("Ear uniformity score: %.3f", uniformity)
         
         return ScorerResult(
             score=float(np.clip(uniformity, 0.0, 1.0)),
