@@ -49,50 +49,56 @@ class ContourType(Enum):
 # Nature doesn't make straight lines! Good acoustic design follows nature.
 # Reference: Stradivari f-holes, Schleske violin acoustics
 CUTOUT_SHAPES = [
-    # === FORME ORGANICHE (come in natura) ===
-    "ellipse",      # Standard f-hole style (violin/cello)
-    "circle",       # Cerchio perfetto
-    "crescent",     # Mezzaluna - bilanciamento modi asimmetrici
-    "tear",         # Goccia - per zone di stress direzionale
-    "f_hole",       # Stylized f-hole (double curve like violin)
-    "kidney",       # Forma a rene (sound port style)
-    "s_curve",      # Curva a S (per modo torsionale)
-    "vesica",       # Vesica piscis (sacred geometry)
-    "spiral",       # Spirale logaritmica (golden ratio)
-    "leaf",         # Forma a foglia (naturale)
-    "wave",         # Onda sinusoidale chiusa
-    # === FORMA LIBERA (fresa manuale) ===
-    "freeform",     # Poligono arbitrario con curve smooth
+    # === CNC-REALISTIC SHAPES (lavorabili con fresa) ===
+    "slot",         # Scanalatura dritta (2-8mm width, length variabile)
+    "arc_slot",     # Scanalatura ad arco (raggio + angolo)
+    "circle",       # Cerchio (fresa a tuffo o elicoidale)
+    "ellipse",      # Ellisse (percorso fresa)
+    "f_hole",       # F-hole stilizzato (percorso CNC)
+    # === FORME ORGANICHE (richiede fresa manuale) ===
+    "crescent",     # Mezzaluna
+    "tear",         # Goccia
+    "kidney",       # Forma a rene
+    "s_curve",      # Curva a S
+    "vesica",       # Vesica piscis
+    "spiral",       # Spirale logaritmica
+    "leaf",         # Forma a foglia
+    "wave",         # Onda sinusoidale
+    "freeform",     # Poligono arbitrario
 ]
+
+# CNC tool diameters in mm (standard end mills)
+CNC_TOOL_DIAMETERS_MM = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
+
 
 @dataclass
 class CutoutGene:
     """
-    Gene per un taglio interno (foro passante).
+    Gene per un taglio interno (foro passante) CNC-compatibile.
     
-    LIBERTÀ TOTALE per l'ottimizzatore:
-    - Qualsiasi forma predefinita O freeform (poligono arbitrario)
-    - Qualsiasi dimensione (width/height indipendenti)
-    - Qualsiasi rotazione (0-2π)
-    - Qualsiasi posizione (evitando bordi)
-    - Control points per forme freeform (fresa manuale)
+    VINCOLI CNC:
+    - width: deve corrispondere al diametro fresa (2-8mm) o essere maggiore
+    - Per SLOT: width = diametro fresa, height = lunghezza slot
+    - Per ARC_SLOT: segue un arco, width = diametro fresa
     
-    Per FREEFORM:
-    - control_points: Lista di (x, y) normalizzati [0-1] relativi al centro
-    - La fresa manuale può creare qualsiasi forma
+    Per forme organiche/freeform richiede fresa manuale.
     
     Posizione e dimensioni normalizzate [0, 1].
     """
-    x: float              # Centro X normalizzato
-    y: float              # Centro Y normalizzato
-    width: float          # Larghezza normalizzata (libera: 0.01-0.3)
-    height: float         # Altezza normalizzata (libera: 0.01-0.3)
-    rotation: float = 0.0 # Rotazione in radianti (libera: 0-2π)
-    shape: str = "ellipse"  # Forma (libera scelta tra CUTOUT_SHAPES)
-    corner_radius: float = 0.3  # Per rounded_rect: raggio angoli (0-1)
-    aspect_bias: float = 1.0    # Bias aspetto (0.3-3.0): <1 = wide, >1 = tall
+    x: float              # Centro X normalizzato (0.05-0.95 per stare dentro i bordi)
+    y: float              # Centro Y normalizzato (0.05-0.95)
+    width: float          # Larghezza normalizzata - per SLOT = tool width
+    height: float         # Altezza normalizzata - per SLOT = lunghezza slot
+    rotation: float = 0.0 # Rotazione in radianti
+    shape: str = "slot"   # Default: slot CNC (forma più realistica)
+    corner_radius: float = 0.3  # Per forme arrotondate
+    aspect_bias: float = 1.0    # Bias aspetto
+    # CNC-specific parameters
+    tool_diameter_mm: float = 6.0  # Diametro fresa (standard 6mm)
+    arc_radius: float = 0.0   # Per arc_slot: raggio arco normalizzato
+    arc_angle: float = 0.0    # Per arc_slot: angolo arco in radianti
     # FREEFORM: punti di controllo per poligono arbitrario (fresa manuale)
-    control_points: Optional[np.ndarray] = None  # Shape (N, 2), punti relativi al centro
+    control_points: Optional[np.ndarray] = None
     
     def __post_init__(self):
         """Initialize control points for freeform shape."""
@@ -105,34 +111,56 @@ class CutoutGene:
                 radii * np.cos(angles),
                 radii * np.sin(angles)
             ])
+        
+        # Ensure position is within valid bounds
+        self.x = np.clip(self.x, 0.08, 0.92)
+        self.y = np.clip(self.y, 0.08, 0.92)
     
     def mutate(self, sigma: float = 0.05) -> 'CutoutGene':
-        """Muta questo cutout con libertà totale."""
-        # Possibilità di cambiare forma durante mutazione
-        new_shape = self.shape
-        if np.random.random() < 0.15:  # 15% chance di cambio forma
-            new_shape = np.random.choice(CUTOUT_SHAPES)
+        """
+        Muta questo cutout mantenendo vincoli CNC-realistici.
         
-        # Width e height indipendenti (nessun vincolo aspect ratio)
-        new_width = np.clip(self.width + np.random.normal(0, sigma * 0.8), 0.01, 0.3)
-        new_height = np.clip(self.height + np.random.normal(0, sigma * 0.8), 0.01, 0.3)
+        Per SLOT/ARC_SLOT:
+        - Width resta fisso (= diametro fresa)
+        - Length (height) può variare
+        - Posizione si muove seguendo modalità
+        """
+        new_shape = self.shape
+        
+        # 10% chance di cambiare forma, ma preferisci forme CNC
+        if np.random.random() < 0.10:
+            # 80% probabilità forme CNC-native
+            if np.random.random() < 0.80:
+                new_shape = np.random.choice(["slot", "arc_slot", "circle", "ellipse"])
+            else:
+                new_shape = np.random.choice(CUTOUT_SHAPES)
+        
+        # Per SLOT: width è fisso (tool diameter), muta solo height (length)
+        # CRITICAL: Max height 0.12 (12%) to prevent plate-dividing cuts!
+        # On 670mm plate: 0.12 = 80mm max slot length (safe for structural integrity)
+        if new_shape in ["slot", "arc_slot"]:
+            new_width = self.width  # Keep tool width constant
+            new_height = np.clip(self.height + np.random.normal(0, sigma), 0.03, 0.12)  # Max 12%!
+            new_tool_diameter = self.tool_diameter_mm  # Keep tool
+        else:
+            new_width = np.clip(self.width + np.random.normal(0, sigma * 0.5), 0.01, 0.10)
+            new_height = np.clip(self.height + np.random.normal(0, sigma * 0.5), 0.01, 0.10)  # Max 10%
+            new_tool_diameter = self.tool_diameter_mm
+        
+        # Muta arc parameters
+        new_arc_radius = self.arc_radius
+        new_arc_angle = self.arc_angle
+        if new_shape == "arc_slot":
+            new_arc_radius = np.clip(self.arc_radius + np.random.normal(0, sigma), 0.05, 0.3)
+            new_arc_angle = np.clip(self.arc_angle + np.random.normal(0, 0.3), 0.3, np.pi)
         
         # Muta control points per freeform
         new_control_points = None
         if new_shape == "freeform":
             if self.control_points is not None:
-                # Muta punti esistenti
                 noise = np.random.normal(0, sigma * 0.5, self.control_points.shape)
                 new_control_points = np.clip(self.control_points + noise, -1.0, 1.0)
-                # Possibilità di aggiungere/rimuovere punto
-                if np.random.random() < 0.1 and len(new_control_points) > 4:
-                    idx = np.random.randint(len(new_control_points))
-                    new_control_points = np.delete(new_control_points, idx, axis=0)
-                elif np.random.random() < 0.1 and len(new_control_points) < 12:
-                    new_pt = np.random.uniform(-1, 1, (1, 2))
-                    new_control_points = np.vstack([new_control_points, new_pt])
             else:
-                # Genera nuovi control points
                 n_points = np.random.randint(5, 9)
                 angles = np.sort(np.random.uniform(0, 2*np.pi, n_points))
                 radii = np.random.uniform(0.3, 1.0, n_points)
@@ -142,14 +170,17 @@ class CutoutGene:
                 ])
         
         return CutoutGene(
-            x=np.clip(self.x + np.random.normal(0, sigma), 0.05, 0.95),
-            y=np.clip(self.y + np.random.normal(0, sigma), 0.05, 0.95),
+            x=np.clip(self.x + np.random.normal(0, sigma), 0.08, 0.92),
+            y=np.clip(self.y + np.random.normal(0, sigma), 0.08, 0.92),
             width=new_width,
             height=new_height,
-            rotation=(self.rotation + np.random.normal(0, 0.3)) % (2 * np.pi),
+            rotation=(self.rotation + np.random.normal(0, 0.2)) % (2 * np.pi),
             shape=new_shape,
             corner_radius=np.clip(self.corner_radius + np.random.normal(0, 0.1), 0.0, 1.0),
             aspect_bias=np.clip(self.aspect_bias + np.random.normal(0, 0.2), 0.3, 3.0),
+            tool_diameter_mm=new_tool_diameter,
+            arc_radius=new_arc_radius,
+            arc_angle=new_arc_angle,
             control_points=new_control_points,
         )
     
@@ -172,6 +203,9 @@ class CutoutGene:
             "size": (self.height * plate_length, self.width * plate_width),  # SWAPPED for consistency
             "rotation": self.rotation,
             "shape": self.shape,
+            "tool_diameter_mm": self.tool_diameter_mm,
+            "arc_radius": self.arc_radius * min(plate_length, plate_width) if self.arc_radius > 0 else 0,
+            "arc_angle": self.arc_angle,
         }
 
 
@@ -495,10 +529,48 @@ class SpringSupportGene:
         return f_n * np.sqrt(2)
     
     def mutate(self, sigma: float = 0.03) -> 'SpringSupportGene':
-        """Muta questo supporto."""
+        """
+        Muta questo supporto RISPETTANDO i vincoli di zona.
+        
+        CONSTRAINT: Springs must stay in their assigned zone!
+        - Corner springs (x < 0.3 or x > 0.7): stay in corners
+        - Center springs (0.3 <= x <= 0.7): stay in center
+        
+        This prevents structural instability from springs migrating
+        away from corners during evolution.
+        """
+        # Determine zone based on current position
+        is_left = self.x < 0.3
+        is_right = self.x > 0.7
+        is_feet = self.y < 0.3
+        is_head = self.y > 0.7
+        is_center_x = 0.3 <= self.x <= 0.7
+        is_center_y = 0.3 <= self.y <= 0.7
+        
+        # Mutate within zone constraints
+        if is_left:
+            # Left zone: x must stay in [0.05, 0.30]
+            new_x = np.clip(self.x + np.random.normal(0, sigma), 0.05, 0.30)
+        elif is_right:
+            # Right zone: x must stay in [0.70, 0.95]
+            new_x = np.clip(self.x + np.random.normal(0, sigma), 0.70, 0.95)
+        else:
+            # Center zone: x stays in [0.35, 0.65]
+            new_x = np.clip(self.x + np.random.normal(0, sigma), 0.35, 0.65)
+        
+        if is_feet:
+            # Feet zone: y must stay in [0.05, 0.25]
+            new_y = np.clip(self.y + np.random.normal(0, sigma), 0.05, 0.25)
+        elif is_head:
+            # Head zone: y must stay in [0.75, 0.95]
+            new_y = np.clip(self.y + np.random.normal(0, sigma), 0.75, 0.95)
+        else:
+            # Center zone: y stays in [0.35, 0.60] (below person's center of mass)
+            new_y = np.clip(self.y + np.random.normal(0, sigma), 0.35, 0.60)
+        
         return SpringSupportGene(
-            x=np.clip(self.x + np.random.normal(0, sigma), 0.05, 0.95),
-            y=np.clip(self.y + np.random.normal(0, sigma), 0.05, 0.95),
+            x=new_x,
+            y=new_y,
             stiffness_n_m=np.clip(
                 self.stiffness_n_m * (1 + np.random.normal(0, 0.2)),
                 3000, 50000
@@ -555,6 +627,52 @@ class SpringSupportGene:
         """
         return self.stiffness_n_m
     
+    def is_near_edge(self, margin: float = 0.15) -> bool:
+        """
+        Verifica se la molla è vicina al bordo della piastra.
+        
+        Le molle DEVONO essere vicino ai bordi per supportare la struttura!
+        Una molla al centro (0.5, 0.5) non può sostenere gli angoli.
+        
+        Args:
+            margin: Distanza dal bordo considerata "vicina" (default 15%)
+        
+        Returns:
+            True se x < margin OR x > 1-margin OR y < margin OR y > 1-margin
+        """
+        near_left = self.x < margin
+        near_right = self.x > (1.0 - margin)
+        near_feet = self.y < margin
+        near_head = self.y > (1.0 - margin)
+        return near_left or near_right or near_feet or near_head
+    
+    def is_in_corner_region(self, margin: float = 0.25) -> Tuple[bool, str]:
+        """
+        Verifica se la molla è in una regione d'angolo.
+        
+        STRUCTURAL PHYSICS: Per sostenere una piastra rettangolare,
+        le molle devono essere distribuite in modo da coprire:
+        - 4 angoli (o regioni vicine)
+        - Opzionalmente: centro (dove poggia il peso della persona)
+        
+        Returns:
+            (is_corner, region_name) dove region è una di:
+            'feet_left', 'feet_right', 'head_left', 'head_right', 'center', 'other'
+        """
+        # Regioni d'angolo (x, y range)
+        if self.x < margin and self.y < margin:
+            return True, 'feet_left'
+        elif self.x > (1.0 - margin) and self.y < margin:
+            return True, 'feet_right'
+        elif self.x < margin and self.y > (1.0 - margin):
+            return True, 'head_left'
+        elif self.x > (1.0 - margin) and self.y > (1.0 - margin):
+            return True, 'head_right'
+        elif 0.35 < self.x < 0.65 and 0.35 < self.y < 0.65:
+            return True, 'center'
+        else:
+            return False, 'other'
+    
     def to_absolute(self, plate_length: float, plate_width: float) -> Dict:
         """
         Converti in coordinate assolute [m] per FEM.
@@ -580,15 +698,26 @@ class SpringSupportGene:
 # Ottimizzato per tavola vibroacustica standard
 # PHYSICS: k=8kN/m con m=15kg → f_n≈3.7Hz → cutoff≈5.2Hz
 # Frequenze > 5Hz saranno isolate dal pavimento
+#
+# STRUCTURAL PRIORITY: Springs must be at CORNERS for structural support!
+# The plate cannot stand if springs are only in the center.
+# Weight distribution is secondary to structural stability.
 DEFAULT_SPRING_SUPPORTS = [
-    # Testa (carico leggero ~10kg → f_n più alta)
-    SpringSupportGene(x=0.5, y=0.92, stiffness_n_m=6000, damping_ratio=0.12),
-    # Spalle/Torace (carico medio ~20kg ciascuna)
-    SpringSupportGene(x=0.2, y=0.65, stiffness_n_m=10000, damping_ratio=0.10),
-    SpringSupportGene(x=0.8, y=0.65, stiffness_n_m=10000, damping_ratio=0.10),
-    # Bacino/Fianchi (max weight ~22kg ciascuna)
-    SpringSupportGene(x=0.2, y=0.35, stiffness_n_m=12000, damping_ratio=0.08),
-    SpringSupportGene(x=0.8, y=0.35, stiffness_n_m=12000, damping_ratio=0.08),
+    # ═══════════════════════════════════════════════════════════════════════
+    # STRUCTURAL: 4 corners for stability (like table legs)
+    # ═══════════════════════════════════════════════════════════════════════
+    # Feet-left corner (supports feet end left)
+    SpringSupportGene(x=0.15, y=0.10, stiffness_n_m=10000, damping_ratio=0.10),
+    # Feet-right corner (supports feet end right)
+    SpringSupportGene(x=0.85, y=0.10, stiffness_n_m=10000, damping_ratio=0.10),
+    # Head-left corner (supports head end left)
+    SpringSupportGene(x=0.15, y=0.90, stiffness_n_m=8000, damping_ratio=0.12),
+    # Head-right corner (supports head end right)  
+    SpringSupportGene(x=0.85, y=0.90, stiffness_n_m=8000, damping_ratio=0.12),
+    # ═══════════════════════════════════════════════════════════════════════
+    # CENTER: Support person's weight (heaviest point: hips/lower back)
+    # ═══════════════════════════════════════════════════════════════════════
+    SpringSupportGene(x=0.50, y=0.45, stiffness_n_m=12000, damping_ratio=0.08),
 ]
 
 
@@ -605,22 +734,37 @@ HARDWARE_CLEARANCE = {
 @dataclass 
 class ExciterPosition:
     """
-    Posizione di un eccitatore sulla tavola.
+    Posizione e parametri DSP di un eccitatore sulla tavola.
     
     Sistema: 4× Dayton DAEX25 (25mm, 40W, 8Ω)
     - CH1, CH2: Head (stereo left/right)
     - CH3, CH4: Feet (stereo left/right)
     
-    Reference: JAB4_DOCUMENTATION.md
+    DSP PARAMETERS (evolvable in BLOOM phase):
+    - phase_deg: Fase (0-360°) per interferenza costruttiva/distruttiva
+    - gain_db: Guadagno (-12 to +6 dB) per bilanciare zone
+    - delay_ms: Ritardo (0-50 ms) per allineamento temporale
+    
+    EVOLUTION STRATEGY (SEED → BLOOM):
+    - SEED: Ottimizza solo posizione (x, y) per trovare design fisico
+    - BLOOM: Aggiunge DSP params per fine-tuning (fase, gain, delay)
+    
+    Reference: JAB4_DOCUMENTATION.md, Sum & Pan 2000
     """
     x: float              # Posizione X normalizzata (0=left, 1=right)
     y: float              # Posizione Y normalizzata (0=feet, 1=head)
     channel: int          # Canale JAB4 (1-4)
+    
+    # DSP Parameters (evolvable in BLOOM phase)
+    phase_deg: float = 0.0        # Fase in gradi (0-360) - GA può ottimizzare!
+    gain_db: float = 0.0          # Guadagno in dB (-12 to +6) - BLOOM phase
+    delay_ms: float = 0.0         # Delay in ms (0-50) - BLOOM phase
+    
     exciter_model: str = "dayton_daex25"  # Key in EXCITERS database
     
     # Derivati dal modello
     diameter_mm: float = 25.0     # Dayton DAEX25
-    power_w: float = 10.0         # RMS power
+    power_w: float = 10.0         # RMS power (max 25W per channel)
     impedance_ohm: float = 4.0    # 4Ω version
     
     def to_absolute(self, plate_length: float, plate_width: float) -> Dict:
@@ -652,6 +796,27 @@ class ExciterPosition:
     def is_feet_zone(self) -> bool:
         """True se eccitatore è nella zona piedi (y < 0.3)."""
         return self.y < 0.3
+    
+    @property
+    def gain_linear(self) -> float:
+        """Convert gain_db to linear amplitude multiplier."""
+        return 10 ** (self.gain_db / 20)
+    
+    @property
+    def delay_samples(self) -> int:
+        """Convert delay_ms to samples at 48kHz."""
+        return int(self.delay_ms * 48)  # 48000 Hz / 1000 ms
+    
+    def get_dsp_params(self) -> Dict[str, float]:
+        """Return DSP parameters as dict for audio processing."""
+        return {
+            "channel": self.channel,
+            "phase_deg": self.phase_deg,
+            "gain_db": self.gain_db,
+            "gain_linear": self.gain_linear,
+            "delay_ms": self.delay_ms,
+            "delay_samples": self.delay_samples,
+        }
 
 
 # Default exciter layout: 4 exciters in standard configuration
@@ -704,6 +869,13 @@ class PlateGenome:
     # Forma contorno
     contour_type: ContourType = ContourType.GOLDEN_RECT
     control_points: np.ndarray = field(default_factory=lambda: np.array([]))
+    
+    # FIXED CONTOUR: Se True, il contorno NON può cambiare durante evoluzione
+    # Utile quando l'utente ha scelto una forma specifica (es. RECTANGLE)
+    fixed_contour: bool = False
+    
+    # SYMMETRY: Se True, tutti i cutouts/grooves sono specchiati sul centro
+    enforce_symmetry: bool = True  # Default True per acoustic balance
     
     # Spessore variabile (opzionale)
     thickness_field: Optional[np.ndarray] = None
@@ -1063,17 +1235,21 @@ class PlateGenome:
         # ═══════════════════════════════════════════════════════════════════════
         # Pair CH1 with CH2 (head), CH3 with CH4 (feet)
         # Use same distance from center for paired channels
+        # PRESERVE phase AND DSP params for acoustic coherence
         
         for i, exc in enumerate(new_genome.exciters):
             if exc.channel == 1:
                 # Find CH2 and mirror
                 for j, exc2 in enumerate(new_genome.exciters):
                     if exc2.channel == 2:
-                        # Make CH2 mirror of CH1
+                        # Make CH2 mirror of CH1 (keep DSP params for stereo coherence)
                         new_genome.exciters[j] = ExciterPosition(
                             x=1.0 - exc.x,
                             y=exc.y,  # Same Y
                             channel=2,
+                            phase_deg=getattr(exc, 'phase_deg', 0.0),  # Same phase for stereo
+                            gain_db=getattr(exc, 'gain_db', 0.0),      # Same gain for stereo
+                            delay_ms=getattr(exc, 'delay_ms', 0.0),    # Same delay for stereo
                             exciter_model=exc.exciter_model,
                         )
                         break
@@ -1085,9 +1261,133 @@ class PlateGenome:
                             x=1.0 - exc.x,
                             y=exc.y,
                             channel=4,
+                            phase_deg=getattr(exc, 'phase_deg', 0.0),  # Same phase
+                            gain_db=getattr(exc, 'gain_db', 0.0),      # Same gain
+                            delay_ms=getattr(exc, 'delay_ms', 0.0),    # Same delay
                             exciter_model=exc.exciter_model,
                         )
                         break
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════════════════════
+        # SYMMETRIC SPRINGS - PRESERVE COUNT AND STRUCTURAL POSITIONS!
+        # ═══════════════════════════════════════════════════════════════════════
+        # Springs must be symmetric for balanced support and phase rotation.
+        # CRITICAL: 
+        # 1. MUST NOT increase the number of springs!
+        # 2. MUST PRESERVE Y positions (structural support!)
+        # 3. Only mirror X positions for left/right symmetry
+        #
+        # BUG FIX: Previous version averaged Y positions, destroying structural
+        # support by moving corner springs to center. Now we PRESERVE Y positions
+        # and only make X symmetric.
+        
+        original_count = len(new_genome.spring_supports)
+        
+        if original_count == 0:
+            return new_genome
+        
+        # Group springs by Y position into "rows" (corner vs center regions)
+        # A row is a group of springs at similar Y heights
+        springs = list(new_genome.spring_supports)
+        symmetric_springs = []
+        
+        # Define Y regions for structural support
+        # CORNER_LOW: y < 0.30 (feet end)
+        # CENTER: 0.30 <= y <= 0.70
+        # CORNER_HIGH: y > 0.70 (head end)
+        
+        corner_low = [s for s in springs if s.y < 0.30]
+        corner_high = [s for s in springs if s.y > 0.70]
+        center = [s for s in springs if 0.30 <= s.y <= 0.70]
+        
+        def make_symmetric_pair(spring_list: list, region_name: str) -> list:
+            """Make springs symmetric within a Y region, preserving Y positions."""
+            result = []
+            if not spring_list:
+                return result
+            
+            # Sort by X to identify left/right
+            sorted_springs = sorted(spring_list, key=lambda s: s.x)
+            
+            if len(sorted_springs) == 1:
+                # Single spring in region: center it
+                s = sorted_springs[0]
+                result.append(SpringSupportGene(
+                    x=0.5, y=s.y,  # PRESERVE Y!
+                    stiffness_n_m=s.stiffness_n_m,
+                    damping_ratio=s.damping_ratio,
+                ))
+            elif len(sorted_springs) == 2:
+                # Pair: make symmetric around x=0.5, PRESERVE Y!
+                left, right = sorted_springs[0], sorted_springs[1]
+                left_x = min(left.x, 0.45)  # Keep on left side
+                if left_x > 0.35:
+                    left_x = 0.15  # Force to edge for corners
+                
+                # Use left spring's Y for both (preserve structural position)
+                result.append(SpringSupportGene(
+                    x=left_x, y=left.y,  # PRESERVE Y!
+                    stiffness_n_m=left.stiffness_n_m,
+                    damping_ratio=left.damping_ratio,
+                ))
+                result.append(SpringSupportGene(
+                    x=1.0 - left_x, y=right.y,  # PRESERVE Y!
+                    stiffness_n_m=right.stiffness_n_m,
+                    damping_ratio=right.damping_ratio,
+                ))
+            else:
+                # Multiple springs: pair them by X position
+                mid = len(sorted_springs) // 2
+                for i in range(mid):
+                    left = sorted_springs[i]
+                    right = sorted_springs[-(i+1)]
+                    left_x = min(left.x, 0.45)
+                    
+                    result.append(SpringSupportGene(
+                        x=left_x, y=left.y,  # PRESERVE Y!
+                        stiffness_n_m=left.stiffness_n_m,
+                        damping_ratio=left.damping_ratio,
+                    ))
+                    result.append(SpringSupportGene(
+                        x=1.0 - left_x, y=right.y,  # PRESERVE Y!
+                        stiffness_n_m=right.stiffness_n_m,
+                        damping_ratio=right.damping_ratio,
+                    ))
+                
+                # Handle odd spring in middle
+                if len(sorted_springs) % 2 == 1:
+                    mid_spring = sorted_springs[mid]
+                    result.append(SpringSupportGene(
+                        x=0.5, y=mid_spring.y,  # PRESERVE Y!
+                        stiffness_n_m=mid_spring.stiffness_n_m,
+                        damping_ratio=mid_spring.damping_ratio,
+                    ))
+            
+            return result
+        
+        # Process each region
+        symmetric_springs.extend(make_symmetric_pair(corner_low, "feet"))
+        symmetric_springs.extend(make_symmetric_pair(center, "center"))
+        symmetric_springs.extend(make_symmetric_pair(corner_high, "head"))
+        
+        # SAFETY: Verify count is preserved
+        if len(symmetric_springs) != original_count:
+            # Fallback: just mirror X positions of original springs
+            symmetric_springs = []
+            for s in springs:
+                if s.x < 0.5:
+                    symmetric_springs.append(s)
+                elif s.x > 0.5:
+                    symmetric_springs.append(SpringSupportGene(
+                        x=1.0 - s.x, y=s.y,
+                        stiffness_n_m=s.stiffness_n_m,
+                        damping_ratio=s.damping_ratio,
+                    ))
+                else:
+                    symmetric_springs.append(s)  # Center spring unchanged
+        
+        new_genome.spring_supports = symmetric_springs[:original_count]
         
         return new_genome
     
@@ -1098,7 +1398,183 @@ class PlateGenome:
         mirrored = points.copy()
         mirrored[:, 0] = -mirrored[:, 0]  # Flip x coordinates
         return mirrored
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # STRUCTURAL SUPPORT ENFORCEMENT
+    # ─────────────────────────────────────────────────────────────────────────
     
+    def enforce_structural_support(self, person_weight_kg: float = 75.0) -> 'PlateGenome':
+        """
+        Enforce valid structural support positions for springs.
+        
+        PHYSICS PRIORITY: Springs MUST support the plate structurally before
+        being optimized for acoustic properties! A plate that can't stand
+        is useless regardless of its acoustic performance.
+        
+        STRUCTURAL REQUIREMENTS:
+        1. At least 4 springs must be near the corners (within 25% from edges)
+        2. Springs must be distributed to cover all 4 quadrants
+        3. If 5+ springs, one should be near center (person weight distribution)
+        
+        CURRICULUM METAPHOR: "Il petalo non sboccia se il gambo non regge"
+        (The petal doesn't bloom if the stem can't support it)
+        
+        This is the SEED-phase constraint: structural validity comes BEFORE
+        acoustic optimization (BLOOM phase).
+        
+        Args:
+            person_weight_kg: Expected weight to support
+        
+        Returns:
+            New PlateGenome with structurally valid spring positions
+        """
+        new_genome = copy.deepcopy(self)
+        n_springs = len(new_genome.spring_supports)
+        
+        if n_springs == 0:
+            # No springs - create default structural support
+            new_genome.spring_supports = list(DEFAULT_SPRING_SUPPORTS)
+            return new_genome
+        
+        # Check current structural coverage
+        coverage = self._get_spring_coverage()
+        
+        # If coverage is good, don't modify
+        if coverage['score'] >= 0.8:
+            return new_genome
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STRUCTURAL CORRECTION: Force springs to valid support positions
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        # Define required support regions (corners + optional center)
+        required_regions = [
+            ('feet_left', 0.15, 0.15),     # Corner 1
+            ('feet_right', 0.85, 0.15),    # Corner 2  
+            ('head_left', 0.15, 0.85),     # Corner 3
+            ('head_right', 0.85, 0.85),    # Corner 4
+        ]
+        
+        if n_springs >= 5:
+            required_regions.append(('center', 0.50, 0.50))
+        
+        # Calculate stiffness for even load distribution
+        load_per_spring_N = (person_weight_kg / n_springs) * 9.81
+        target_deflection_m = 0.005  # 5mm
+        default_k = load_per_spring_N / target_deflection_m
+        
+        # Assign springs to required regions
+        assigned_springs = []
+        remaining_springs = list(new_genome.spring_supports)
+        
+        for region_name, target_x, target_y in required_regions:
+            if not remaining_springs:
+                break
+            
+            # Find closest spring to this region
+            best_idx = 0
+            best_dist = float('inf')
+            for i, spring in enumerate(remaining_springs):
+                dist = np.sqrt((spring.x - target_x)**2 + (spring.y - target_y)**2)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+            
+            # Move spring to valid region (with small random offset for variation)
+            spring = remaining_springs.pop(best_idx)
+            offset_x = np.random.uniform(-0.08, 0.08)
+            offset_y = np.random.uniform(-0.08, 0.08)
+            
+            assigned_springs.append(SpringSupportGene(
+                x=np.clip(target_x + offset_x, 0.05, 0.95),
+                y=np.clip(target_y + offset_y, 0.05, 0.95),
+                stiffness_n_m=spring.stiffness_n_m if spring.stiffness_n_m > 3000 else default_k,
+                damping_ratio=spring.damping_ratio,
+            ))
+        
+        # Add any extra springs (can be more freely positioned)
+        for spring in remaining_springs:
+            assigned_springs.append(spring)
+        
+        new_genome.spring_supports = assigned_springs
+        
+        return new_genome
+    
+    def _get_spring_coverage(self) -> Dict:
+        """
+        Evaluate how well springs cover required structural regions.
+        
+        Returns dict with:
+        - regions_covered: list of covered regions
+        - score: 0-1 coverage score (1 = all corners covered)
+        - missing: list of uncovered regions
+        """
+        # Corner regions (x_range, y_range, name)
+        corner_regions = [
+            ((0.0, 0.30), (0.0, 0.30), 'feet_left'),
+            ((0.70, 1.0), (0.0, 0.30), 'feet_right'),
+            ((0.0, 0.30), (0.70, 1.0), 'head_left'),
+            ((0.70, 1.0), (0.70, 1.0), 'head_right'),
+        ]
+        
+        covered = []
+        missing = []
+        
+        for (x_min, x_max), (y_min, y_max), name in corner_regions:
+            region_covered = False
+            for spring in self.spring_supports:
+                if x_min <= spring.x <= x_max and y_min <= spring.y <= y_max:
+                    region_covered = True
+                    break
+            
+            if region_covered:
+                covered.append(name)
+            else:
+                missing.append(name)
+        
+        score = len(covered) / len(corner_regions) if corner_regions else 0.0
+        
+        return {
+            'regions_covered': covered,
+            'missing': missing,
+            'score': score,
+            'n_springs': len(self.spring_supports),
+        }
+    
+    def structural_support_penalty(self) -> float:
+        """
+        Calculate penalty for poor structural spring placement.
+        
+        Returns:
+            Penalty value 0-1 (0 = perfect, 1 = completely invalid)
+        """
+        coverage = self._get_spring_coverage()
+        
+        # Base penalty: uncovered corners
+        corner_penalty = 1.0 - coverage['score']
+        
+        # Additional penalty if springs are too clustered
+        if len(self.spring_supports) >= 2:
+            positions = [(s.x, s.y) for s in self.spring_supports]
+            
+            # Calculate average distance between springs
+            total_dist = 0
+            n_pairs = 0
+            for i, (x1, y1) in enumerate(positions):
+                for j, (x2, y2) in enumerate(positions[i+1:], i+1):
+                    total_dist += np.sqrt((x1-x2)**2 + (y1-y2)**2)
+                    n_pairs += 1
+            
+            if n_pairs > 0:
+                avg_dist = total_dist / n_pairs
+                # Ideal distance ~0.5 (spread across plate)
+                # If avg_dist < 0.2, springs are too clustered
+                if avg_dist < 0.25:
+                    cluster_penalty = (0.25 - avg_dist) / 0.25 * 0.5  # Up to 50% penalty
+                    corner_penalty = min(1.0, corner_penalty + cluster_penalty)
+        
+        return corner_penalty
+
     # ─────────────────────────────────────────────────────────────────────────
     # Generazione Contorno Base
     # ─────────────────────────────────────────────────────────────────────────
@@ -1428,11 +1904,11 @@ class PlateGenome:
         )
         
         # ═══════════════════════════════════════════════════════════════════════
-        # CONTORNO TAVOLA: può mutare tipo e forma
+        # CONTORNO TAVOLA: può mutare tipo e forma SOLO SE NON FIXED
         # ═══════════════════════════════════════════════════════════════════════
         
-        # 10% chance di cambiare tipo contorno (higher to explore shapes)
-        if np.random.random() < 0.10:
+        # 10% chance di cambiare tipo contorno, BUT ONLY IF NOT FIXED
+        if not self.fixed_contour and np.random.random() < 0.10:
             all_types = [
                 ContourType.RECTANGLE, ContourType.GOLDEN_RECT, 
                 ContourType.ELLIPSE, ContourType.OVOID,
@@ -1506,11 +1982,12 @@ class PlateGenome:
                     ))
                 else:
                     # Fallback to random (still organic shapes only)
+                    # STRUCTURAL SAFETY: Max 10% of plate dimension to avoid dividing cuts!
                     new_genome.cutouts.append(CutoutGene(
                         x=np.random.uniform(0.1, 0.9),
                         y=np.random.uniform(0.15, 0.85),
-                        width=np.random.uniform(0.02, 0.15),
-                        height=np.random.uniform(0.02, 0.15),
+                        width=np.random.uniform(0.02, 0.08),   # Max 8% width
+                        height=np.random.uniform(0.02, 0.10),  # Max 10% height
                         rotation=np.random.uniform(0, 2 * np.pi),
                         shape=np.random.choice(CUTOUT_SHAPES),
                         corner_radius=np.random.uniform(0.0, 0.8),
@@ -1552,45 +2029,104 @@ class PlateGenome:
             new_genome.grooves = []
         
         # ═══════════════════════════════════════════════════════════════════════
-        # EXCITERS: Mutate positions LIBERAMENTE per massimo coupling
+        # EXCITERS: Mutate positions AND DSP params for optimal modal coupling
+        # Reference: Multi-exciter optimization (Lu 2012, Bai & Liu 2004)
+        # DSP params (gain, delay, phase) activated in BLOOM phase
         # ═══════════════════════════════════════════════════════════════════════
-        # Gli exciters possono muoversi significativamente per ottimizzare
-        # l'accoppiamento modale nelle zone target (spine/head)
+        # Higher mutation rate for visible movement during evolution
         
-        p_mutate_exciter = 0.20  # 20% probability per exciter per generation
-        p_large_move = 0.05      # 5% chance of large repositioning
+        p_mutate_exciter = 0.40  # 40% probability per exciter per generation (was 20%)
+        p_large_move = 0.10      # 10% chance of large repositioning (was 5%)
+        p_mutate_phase = 0.30    # 30% chance to mutate phase
+        p_mutate_gain = 0.25     # 25% chance to mutate gain (BLOOM phase)
+        p_mutate_delay = 0.20    # 20% chance to mutate delay (BLOOM phase)
         
         for i, exc in enumerate(new_genome.exciters):
+            new_x, new_y = exc.x, exc.y
+            new_phase = getattr(exc, 'phase_deg', 0.0)
+            new_gain = getattr(exc, 'gain_db', 0.0)
+            new_delay = getattr(exc, 'delay_ms', 0.0)
+            
+            # Position mutation
             if np.random.random() < p_mutate_exciter:
                 if np.random.random() < p_large_move:
                     # Large repositioning: jump to new location
                     # Keep channel constraints: CH1/2 upper (head), CH3/4 lower (feet)
                     if exc.channel in [1, 2]:
-                        new_y = np.random.uniform(0.65, 0.95)  # Upper region
+                        new_y = np.random.uniform(0.60, 0.95)  # Upper region
                     else:
-                        new_y = np.random.uniform(0.05, 0.35)  # Lower region
+                        new_y = np.random.uniform(0.05, 0.40)  # Lower region
                     new_x = np.random.uniform(0.15, 0.85)
                 else:
-                    # Small position adjustment
-                    new_x = np.clip(exc.x + np.random.normal(0, 0.08), 0.10, 0.90)
+                    # Small position adjustment with LARGER sigma
+                    new_x = np.clip(exc.x + np.random.normal(0, 0.12), 0.10, 0.90)
                     # Keep y in appropriate region based on channel
                     if exc.channel in [1, 2]:
-                        new_y = np.clip(exc.y + np.random.normal(0, 0.05), 0.55, 0.95)
+                        new_y = np.clip(exc.y + np.random.normal(0, 0.08), 0.55, 0.95)
                     else:
-                        new_y = np.clip(exc.y + np.random.normal(0, 0.05), 0.05, 0.45)
-                
-                new_genome.exciters[i] = ExciterPosition(
-                    x=new_x, y=new_y, channel=exc.channel, exciter_model=exc.exciter_model
-                )
+                        new_y = np.clip(exc.y + np.random.normal(0, 0.08), 0.05, 0.45)
+            
+            # Phase mutation (independent of position)
+            if np.random.random() < p_mutate_phase:
+                # Either small adjustment or random jump
+                if np.random.random() < 0.3:
+                    # Jump to common phase values (0, 90, 180, 270)
+                    new_phase = np.random.choice([0.0, 90.0, 180.0, 270.0])
+                else:
+                    # Small adjustment
+                    new_phase = (new_phase + np.random.normal(0, 30)) % 360
+            
+            # Gain mutation (DSP - BLOOM phase feature)
+            # Range: -12 dB to +6 dB (max power 25W per channel)
+            if np.random.random() < p_mutate_gain:
+                if np.random.random() < 0.2:
+                    # Jump to common gain values (0, -3, -6, +3)
+                    new_gain = np.random.choice([0.0, -3.0, -6.0, 3.0])
+                else:
+                    # Small adjustment (σ=2 dB)
+                    new_gain = np.clip(new_gain + np.random.normal(0, 2.0), -12.0, 6.0)
+            
+            # Delay mutation (DSP - BLOOM phase feature)
+            # Range: 0-50 ms for time alignment
+            if np.random.random() < p_mutate_delay:
+                if np.random.random() < 0.3:
+                    # Jump to common delay values (0, 5, 10, 20 ms)
+                    new_delay = np.random.choice([0.0, 5.0, 10.0, 20.0])
+                else:
+                    # Small adjustment (σ=3 ms)
+                    new_delay = np.clip(new_delay + np.random.normal(0, 3.0), 0.0, 50.0)
+            
+            new_genome.exciters[i] = ExciterPosition(
+                x=new_x, y=new_y, channel=exc.channel, 
+                phase_deg=new_phase, 
+                gain_db=new_gain,
+                delay_ms=new_delay,
+                exciter_model=exc.exciter_model
+            )
         
         # ═══════════════════════════════════════════════════════════════════════
-        # ENFORCE SYMMETRY (if configured)
+        # SPRING SUPPORTS: Mutate positions and stiffness for optimal phase rotation
+        # Reference: Phase rotation modes (PHASE_ROTATION_MODES.md)
         # ═══════════════════════════════════════════════════════════════════════
-        # After all mutations, apply bilateral symmetry if enabled
-        # This ensures acoustically balanced designs like violin plates
-        if getattr(self, '_enforce_symmetry', False):
+        p_mutate_spring = 0.30  # 30% probability per spring per generation (was 15%)
+        
+        for i, spring in enumerate(new_genome.spring_supports):
+            if np.random.random() < p_mutate_spring:
+                new_genome.spring_supports[i] = spring.mutate(sigma=0.06)  # Larger sigma
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # PRIORITY 1: ENFORCE STRUCTURAL SUPPORT (before symmetry!)
+        # "Il petalo non sboccia se il gambo non regge"
+        # Springs MUST support the plate structurally FIRST
+        # ═══════════════════════════════════════════════════════════════════════
+        new_genome = new_genome.enforce_structural_support()
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # PRIORITY 2: ENFORCE SYMMETRY (if configured)
+        # ═══════════════════════════════════════════════════════════════════════
+        # After structural support is valid, apply bilateral symmetry
+        if self.enforce_symmetry:
             new_genome = new_genome.enforce_bilateral_symmetry()
-            new_genome._enforce_symmetry = True
         
         return new_genome
     
@@ -1731,11 +2267,29 @@ class PlateGenome:
         child_max_cutouts = min(self.max_cutouts, other.max_cutouts)
         child_max_grooves = min(self.max_grooves, other.max_grooves)
         
+        # CONTOUR TYPE: If either parent has fixed_contour, inherit that contour
+        # This ensures user's shape choice is preserved through evolution
+        if self.fixed_contour:
+            child_contour = self.contour_type
+            child_fixed_contour = True
+        elif other.fixed_contour:
+            child_contour = other.contour_type
+            child_fixed_contour = True
+        else:
+            # Neither parent is fixed, randomly choose
+            child_contour = self.contour_type if np.random.random() < 0.5 else other.contour_type
+            child_fixed_contour = False
+        
+        # SYMMETRY: Inherit symmetry setting (default True)
+        child_enforce_symmetry = self.enforce_symmetry or other.enforce_symmetry
+        
         child = PlateGenome(
             length=alpha * self.length + (1 - alpha) * other.length,
             width=alpha * self.width + (1 - alpha) * other.width,
             thickness_base=alpha * self.thickness_base + (1 - alpha) * other.thickness_base,
-            contour_type=self.contour_type if np.random.random() < 0.5 else other.contour_type,
+            contour_type=child_contour,
+            fixed_contour=child_fixed_contour,
+            enforce_symmetry=child_enforce_symmetry,
             max_cutouts=child_max_cutouts,
             max_grooves=child_max_grooves,
         )
@@ -1778,6 +2332,62 @@ class PlateGenome:
                 child.grooves = [all_grooves[i] for i in indices]
         else:
             child.grooves = []
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # SPRING SUPPORTS: Blend stiffness/damping, keep positions from fitter parent
+        # ═══════════════════════════════════════════════════════════════════════
+        # Springs are critical for phase rotation - blend their properties
+        if len(self.spring_supports) == len(other.spring_supports):
+            child.spring_supports = []
+            for s1, s2 in zip(self.spring_supports, other.spring_supports):
+                # Blend properties
+                child.spring_supports.append(SpringSupportGene(
+                    x=alpha * s1.x + (1 - alpha) * s2.x,
+                    y=alpha * s1.y + (1 - alpha) * s2.y,
+                    stiffness_n_m=alpha * s1.stiffness_n_m + (1 - alpha) * s2.stiffness_n_m,
+                    damping_ratio=alpha * s1.damping_ratio + (1 - alpha) * s2.damping_ratio,
+                ))
+        else:
+            # Different number of supports - keep from first parent
+            child.spring_supports = [copy.deepcopy(s) for s in self.spring_supports]
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # EXCITERS: Blend positions AND DSP params, keep channel assignments
+        # ═══════════════════════════════════════════════════════════════════════
+        # Exciters are matched by channel
+        child.exciters = []
+        for exc1 in self.exciters:
+            # Find matching exciter in other parent by channel
+            exc2 = next((e for e in other.exciters if e.channel == exc1.channel), exc1)
+            # Blend phases (circular average for angles near 0/360)
+            phase1 = getattr(exc1, 'phase_deg', 0.0)
+            phase2 = getattr(exc2, 'phase_deg', 0.0)
+            blended_phase = (alpha * phase1 + (1 - alpha) * phase2) % 360
+            
+            # Blend DSP params (gain and delay)
+            gain1 = getattr(exc1, 'gain_db', 0.0)
+            gain2 = getattr(exc2, 'gain_db', 0.0)
+            blended_gain = alpha * gain1 + (1 - alpha) * gain2
+            
+            delay1 = getattr(exc1, 'delay_ms', 0.0)
+            delay2 = getattr(exc2, 'delay_ms', 0.0)
+            blended_delay = alpha * delay1 + (1 - alpha) * delay2
+            
+            child.exciters.append(ExciterPosition(
+                x=alpha * exc1.x + (1 - alpha) * exc2.x,
+                y=alpha * exc1.y + (1 - alpha) * exc2.y,
+                channel=exc1.channel,
+                phase_deg=blended_phase,
+                gain_db=blended_gain,
+                delay_ms=blended_delay,
+                exciter_model=exc1.exciter_model,
+            ))
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # ENFORCE SYMMETRY (if enabled)
+        # ═══════════════════════════════════════════════════════════════════════
+        if child_enforce_symmetry:
+            child = child.enforce_bilateral_symmetry()
         
         return child
     
@@ -1921,6 +2531,8 @@ def create_genome_for_person(
     contour_type: ContourType = ContourType.GOLDEN_RECT,
     material_density: float = 680.0,
     allow_cutouts: bool = True,  # Default TRUE (liuteria approach)
+    max_cutouts: int = 4,  # Number of cutouts allowed
+    max_grooves: int = 0,  # Number of grooves allowed (default OFF)
 ) -> PlateGenome:
     """
     Crea un genoma iniziale ottimale per una persona.
@@ -1938,6 +2550,8 @@ def create_genome_for_person(
         contour_type: Tipo forma
         material_density: Densità materiale [kg/m³]
         allow_cutouts: Permetti tagli interni (default True per liuteria)
+        max_cutouts: Numero massimo cutouts (passato da UI/pipeline)
+        max_grooves: Numero massimo grooves (passato da UI/pipeline)
     
     Returns:
         PlateGenome inizializzato
@@ -1945,7 +2559,7 @@ def create_genome_for_person(
     # Initial cutouts: diverse shapes for optimal modal tuning
     # L'ottimizzatore parte da forme diverse e può mutarle liberamente
     initial_cutouts = []
-    if allow_cutouts:
+    if allow_cutouts and max_cutouts > 0:
         # Pattern iniziale con forme diverse (l'optimizer evolverà quelle migliori):
         # - f-hole simmetrici nella zona toracica
         # - slot/slot nella zona lombare
@@ -1961,26 +2575,27 @@ def create_genome_for_person(
                        shape="slot", rotation=0.0),
             CutoutGene(x=0.65, y=0.62, width=0.06, height=0.025, 
                        shape="slot", rotation=0.0),
-        ]
+        ][:max_cutouts]  # Limit to max_cutouts
     
     # Initial grooves: subtle thinning for fine tuning
     # Like violin plate graduations (thinner in center for lower modes)
     initial_grooves = []
-    if allow_cutouts:  # Enable grooves when cutouts enabled
+    if allow_cutouts and max_grooves > 0:  # Enable grooves when requested
         initial_grooves = [
             # Transverse grooves across spine zone for mode 1-2 tuning
             GrooveGene(x=0.5, y=0.50, length=0.12, angle=0.0, depth=0.25, width_mm=5.0),
             # Angled grooves for torsional mode tuning
             GrooveGene(x=0.35, y=0.55, length=0.08, angle=0.4, depth=0.20, width_mm=4.0),
             GrooveGene(x=0.65, y=0.55, length=0.08, angle=-0.4, depth=0.20, width_mm=4.0),
-        ]
+        ][:max_grooves]  # Limit to max_grooves
     
     return PlateGenome(
         length=person.recommended_plate_length,
         width=person.recommended_plate_width,
         thickness_base=0.015,  # 15mm default
         contour_type=contour_type,
-        max_cutouts=4 if allow_cutouts else 0,
+        max_cutouts=max_cutouts,
+        max_grooves=max_grooves,
         cutouts=initial_cutouts,
         grooves=initial_grooves,
     )
@@ -1990,6 +2605,9 @@ def create_random_population(
     n: int,
     person: 'Person',
     contour_types: Optional[List[ContourType]] = None,
+    max_cutouts: int = 4,
+    max_grooves: int = 0,
+    fixed_contour: bool = False,
 ) -> List[PlateGenome]:
     """
     Crea popolazione iniziale per algoritmo genetico.
@@ -1998,6 +2616,9 @@ def create_random_population(
         n: Dimensione popolazione
         person: Modello persona
         contour_types: Tipi contorno da usare (None = tutti)
+        max_cutouts: Numero massimo cutouts per genoma
+        max_grooves: Numero massimo grooves per genoma
+        fixed_contour: Se True, il contour non può cambiare durante evoluzione
     
     Returns:
         Lista di PlateGenome
@@ -2013,9 +2634,18 @@ def create_random_population(
     population = []
     for i in range(n):
         ct = contour_types[i % len(contour_types)]
-        genome = create_genome_for_person(person, ct)
+        genome = create_genome_for_person(
+            person, ct,
+            max_cutouts=max_cutouts,
+            max_grooves=max_grooves,
+        )
         
-        # Aggiungi variazione iniziale
+        # Set fixed_contour BEFORE mutation
+        # This prevents contour type from changing during initial mutation
+        genome.fixed_contour = fixed_contour
+        genome.enforce_symmetry = True  # Default: symmetric for acoustic balance
+        
+        # Aggiungi variazione iniziale (won't change contour if fixed)
         genome = genome.mutate(sigma_dimensions=0.05)
         population.append(genome)
     

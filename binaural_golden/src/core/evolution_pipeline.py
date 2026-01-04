@@ -88,6 +88,12 @@ class PipelineConfig:
     # Evolution settings (passed to optimizer)
     population_size: int = 50
     n_generations: int = 100
+    mutation_rate: float = 0.25
+    
+    # Genome constraints (from UI)
+    max_cutouts: int = 4  # Number of cutouts (lutherie: f-holes)
+    max_grooves: int = 0  # Number of grooves (default OFF)
+    fixed_contour: Optional[str] = None  # None = AUTO, else RECTANGLE, ELLIPSE, etc.
     
     # Logging
     log_every_n_generations: int = 5
@@ -245,6 +251,9 @@ class EvolutionPipeline:
         self._template: Optional[Any] = None
         self._evaluator: Optional[Any] = None
         
+        # External stop flag (can be set by UI)
+        self._stop_requested: bool = False
+        
         # Callbacks
         self._generation_callbacks: List[Callable] = []
         self._anomaly_callbacks: List[Callable] = []
@@ -317,15 +326,20 @@ class EvolutionPipeline:
         
         try:
             from .rdnn_memory import create_rdnn_memory, RDNNArchitecture
+            from pathlib import Path
+            
+            # Use persistent state path in user data directory
+            state_path = Path.home() / ".golden_studio" / "rdnn_state"
             
             arch = RDNNArchitecture.GRU if self.config.rdnn_architecture == "gru" else RDNNArchitecture.LSTM
             
             self._rdnn = create_rdnn_memory(
                 architecture=arch,
                 hidden_size=self.config.rdnn_hidden_size,
+                state_path=str(state_path),  # Enable persistence!
             )
             
-            logger.debug("RDNNMemory initialized")
+            logger.debug(f"RDNNMemory initialized with persistence at {state_path}")
             return self._rdnn
             
         except ImportError as e:
@@ -476,7 +490,7 @@ class EvolutionPipeline:
         if self._evaluator:
             try:
                 result = self._evaluator.evaluate(genome)
-                fitness = result.total_score
+                fitness = result.total_fitness  # Use total_fitness not total_score
             except Exception as e:
                 logger.error(f"Fitness evaluation error: {e}")
                 fitness = float('-inf')
@@ -607,6 +621,15 @@ class EvolutionPipeline:
         
         return None
     
+    def request_stop(self):
+        """Request pipeline to stop at next generation check."""
+        self._stop_requested = True
+        logger.info("Stop requested - will stop after current generation")
+    
+    def reset_stop_flag(self):
+        """Reset stop flag for new run."""
+        self._stop_requested = False
+    
     # ══════════════════════════════════════════════════════════════════════════
     # MAIN RUN LOOP
     # ══════════════════════════════════════════════════════════════════════════
@@ -645,7 +668,7 @@ class EvolutionPipeline:
         
         # Initialize RDNN warm start
         if self._rdnn:
-            self._rdnn.start_run(run_id=self.state.run_id)
+            self._rdnn.start_run()  # No run_id parameter in RDNNMemory API
         
         # Main evolution loop
         fitness_history = []
@@ -706,21 +729,42 @@ class EvolutionPipeline:
             # Create next generation
             population = self._create_next_generation(population, fitnesses)
         
-        # Finalize RDNN
+        # Finalize RDNN and SAVE STATE for persistence
         if self._rdnn:
-            self._rdnn.end_run(
-                best_fitness=self.state.best_fitness,
-                generations=self.state.current_generation,
+            success = self.state.best_fitness > float('-inf')
+            self._rdnn.finalize_run(
+                success=success,
+                final_fitness=self.state.best_fitness,
+                final_objectives=None,
+                notes=f"Pipeline run {self.state.run_id}, {self.state.current_generation + 1} generations",
             )
-            self.state.rdnn_hidden_state = self._rdnn.get_hidden_state()
+            # Access hidden state via model's internal state
+            if hasattr(self._rdnn, 'model') and hasattr(self._rdnn.model, 'get_hidden_state'):
+                self.state.rdnn_hidden_state = self._rdnn.model.get_hidden_state()
+            elif hasattr(self._rdnn, '_hidden'):
+                self.state.rdnn_hidden_state = self._rdnn._hidden
+            
+            # SAVE RDNN state for next session (warm start)
+            self._rdnn.save_state()
+            logger.info("RDNN state saved for future warm starts")
         
-        # Distill knowledge
+        # Distill knowledge from LTM archive
         distilled = None
         if self._ltm_distiller and self.config.distill_on_complete:
             try:
                 from .evolution_memory import LongTermMemory
                 ltm = LongTermMemory()
-                distilled = self._ltm_distiller.distill_all(ltm)
+                # Analyze archive first, then distill each type
+                if hasattr(ltm, 'archive') and ltm.archive:
+                    stats = self._ltm_distiller.analyze_archive(ltm.archive)
+                    priors = self._ltm_distiller.distill_parameter_priors(stats)
+                    rules = self._ltm_distiller.distill_rule_candidates(stats)
+                    distilled = {
+                        'stats': stats,
+                        'priors': priors,
+                        'rules': rules,
+                    }
+                    logger.info(f"Distilled knowledge: {len(rules)} rule candidates")
             except Exception as e:
                 logger.warning(f"Distillation failed: {e}")
         
@@ -751,7 +795,12 @@ class EvolutionPipeline:
     
     def _should_stop(self, generation: int) -> bool:
         """Check if evolution should stop early."""
-        # Minimum generations
+        # External stop request (from UI)
+        if self._stop_requested:
+            logger.info("Stopping: external stop request received")
+            return True
+        
+        # Minimum generations (unless externally stopped)
         if generation < 20:
             return False
         
@@ -762,20 +811,188 @@ class EvolutionPipeline:
         return False
     
     def _create_initial_population(self) -> List:
-        """Create initial population of genomes."""
+        """Create initial population of genomes with UI constraints."""
         try:
-            from .plate_genome import PlateGenome, ContourType
+            from .plate_genome import create_random_population, create_genome_for_person, ContourType
             
-            population = []
-            for _ in range(self.config.population_size):
-                genome = PlateGenome.random()
-                population.append(genome)
+            # Determine contour types from config
+            if self.config.fixed_contour:
+                # Map string to ContourType
+                contour_map = {
+                    "RECTANGLE": ContourType.RECTANGLE,
+                    "GOLDEN_RECT": ContourType.GOLDEN_RECT,
+                    "ELLIPSE": ContourType.ELLIPSE,
+                    "OVOID": ContourType.OVOID,
+                    "VESICA_PISCIS": ContourType.VESICA_PISCIS,
+                    "SUPERELLIPSE": ContourType.SUPERELLIPSE,
+                    "ORGANIC": ContourType.ORGANIC,
+                    "ERGONOMIC": ContourType.ERGONOMIC,
+                    "FREEFORM": ContourType.FREEFORM,
+                    "PHI_ROUNDED": ContourType.RECTANGLE,  # Map to RECTANGLE base
+                }
+                fixed_ct = contour_map.get(self.config.fixed_contour, ContourType.RECTANGLE)
+                contour_types = [fixed_ct]  # Force single contour type
+                logger.info(f"Fixed contour type: {fixed_ct.name}")
+            else:
+                contour_types = None  # AUTO: use variety
+            
+            person = self.person
+            if person is None:
+                from .person import Person
+                person = Person(height_m=1.75, weight_kg=70)
+            
+            population = create_random_population(
+                n=self.config.population_size,
+                person=person,
+                contour_types=contour_types,
+                max_cutouts=self.config.max_cutouts,
+                max_grooves=self.config.max_grooves,
+                fixed_contour=bool(self.config.fixed_contour),  # Pass to population creation
+            )
+            
+            # Apply cutouts/grooves constraints to all genomes
+            for genome in population:
+                # Set fixed_contour flag if user specified a contour
+                if self.config.fixed_contour:
+                    genome.fixed_contour = True
+                else:
+                    genome.fixed_contour = False
+                
+                # Enable symmetry by default (acoustic balance)
+                genome.enforce_symmetry = True
+                
+                # Set cutouts (symmetric positions by default)
+                if self.config.max_cutouts > 0 and hasattr(genome, 'cutouts'):
+                    genome.cutouts = self._create_symmetric_cutouts(
+                        genome, self.config.max_cutouts
+                    )
+                
+                # Set grooves (symmetric by default)
+                if self.config.max_grooves > 0 and hasattr(genome, 'grooves'):
+                    genome.grooves = self._create_symmetric_grooves(
+                        genome, self.config.max_grooves
+                    )
+                elif self.config.max_grooves == 0 and hasattr(genome, 'grooves'):
+                    genome.grooves = []  # Explicitly clear
             
             return population
             
         except Exception as e:
             logger.error(f"Could not create initial population: {e}")
+            import traceback
+            traceback.print_exc()
             return []
+    
+    def _create_symmetric_cutouts(self, genome, n_cutouts: int) -> List:
+        """
+        Create symmetrically positioned CNC-realistic cutouts.
+        
+        CNC CONSTRAINTS:
+        - Slot width = tool diameter (6mm default)
+        - Slots follow modal analysis for positioning
+        - Symmetric pairs for acoustic balance
+        
+        Reference: Schleske (2002), CNC machining best practices
+        """
+        from .plate_genome import CutoutGene
+        import numpy as np
+        
+        cutouts = []
+        n_pairs = n_cutouts // 2
+        
+        # Convert 6mm tool to normalized width (plate width ~0.64m = 640mm)
+        # 6mm / 640mm = 0.0094 ≈ 0.01 normalized
+        tool_width_norm = 6.0 / (genome.width * 1000)  # Convert to normalized
+        
+        # Symmetric pair positions (normalized 0-1)
+        for i in range(n_pairs):
+            # Distribute along length, avoiding spine zone (0.3-0.7)
+            if i < n_pairs // 2:
+                y_pos = 0.15 + (i / max(1, n_pairs // 2)) * 0.12  # Lower region
+            else:
+                y_pos = 0.73 + ((i - n_pairs // 2) / max(1, n_pairs // 2)) * 0.12  # Upper region
+            
+            x_offset = 0.18 + np.random.uniform(-0.03, 0.03)  # Near edge
+            
+            # Slot length varies (80-150mm normalized)
+            slot_length_norm = np.random.uniform(0.05, 0.10)
+            
+            # Rotation: mostly along plate axis with small variation
+            rotation = np.random.choice([0, np.pi/2]) + np.random.uniform(-0.15, 0.15)
+            
+            # Left slot
+            cutouts.append(CutoutGene(
+                x=x_offset,
+                y=y_pos,
+                width=tool_width_norm,  # Fixed: CNC tool diameter
+                height=slot_length_norm,  # Variable: slot length
+                shape="slot",  # CNC-realistic
+                rotation=rotation,
+                tool_diameter_mm=6.0,
+            ))
+            
+            # Right slot (mirrored)
+            cutouts.append(CutoutGene(
+                x=1.0 - x_offset,  # Mirror
+                y=y_pos,
+                width=cutouts[-1].width,  # Same width (tool diameter)
+                height=cutouts[-1].height,  # Same height (slot length)
+                shape="slot",  # CNC-realistic
+                rotation=-cutouts[-1].rotation,  # Mirror rotation
+                tool_diameter_mm=6.0,
+            ))
+        
+        # If odd number, add center slot (perpendicular for mode disruption)
+        if n_cutouts % 2 == 1:
+            cutouts.append(CutoutGene(
+                x=0.5,  # Center
+                y=0.5 + np.random.uniform(-0.1, 0.1),
+                width=tool_width_norm,  # Tool diameter
+                height=0.08,  # 80mm slot
+                shape="slot",  # CNC-realistic
+                rotation=np.pi / 2,  # Perpendicular to axis
+                tool_diameter_mm=6.0,
+            ))
+        
+        return cutouts
+    
+    def _create_symmetric_grooves(self, genome, n_grooves: int) -> List:
+        """
+        Create symmetrically positioned grooves for fine tuning.
+        
+        Grooves are shallow channels that affect specific modes.
+        """
+        from .plate_genome import GrooveGene
+        import numpy as np
+        
+        grooves = []
+        n_pairs = n_grooves // 2
+        
+        # Symmetric pairs
+        for i in range(n_pairs):
+            y_pos = 0.2 + (i / max(1, n_pairs - 1)) * 0.6  # 0.2 to 0.8
+            
+            # Left groove
+            grooves.append(GrooveGene(
+                start_x=0.1,
+                start_y=y_pos,
+                end_x=0.3,
+                end_y=y_pos + np.random.uniform(-0.05, 0.05),
+                width=0.01 + np.random.uniform(0, 0.005),
+                depth=0.002 + np.random.uniform(0, 0.001),
+            ))
+            
+            # Right groove (mirrored)
+            grooves.append(GrooveGene(
+                start_x=0.7,  # Mirror
+                start_y=y_pos,
+                end_x=0.9,
+                end_y=grooves[-1].end_y,  # Same angle
+                width=grooves[-1].width,  # Same width
+                depth=grooves[-1].depth,  # Same depth
+            ))
+        
+        return grooves
     
     def _create_next_generation(
         self,
@@ -785,28 +1002,43 @@ class EvolutionPipeline:
         """
         Create next generation using genetic operators.
         
-        Uses RDNN suggestions for mutation rate if available.
+        Incorporates:
+        1. Elitism: preserve top N individuals
+        2. Fitness Sharing (Niching): penalize crowded regions
+        3. AGA: adaptive mutation rate
         """
         new_population = []
         
-        # Elitism: keep top N
+        # ═══════════════════════════════════════════════════════════════════════
+        # NICHING: Apply Fitness Sharing to maintain diversity
+        # Reference: Goldberg & Richardson (1987) - "Genetic Algorithms with
+        # Sharing for Multimodal Function Optimization"
+        # 
+        # Key Insight: Without niching, GA converges to a SINGLE local optimum.
+        # Fitness sharing penalizes similar individuals, maintaining diversity.
+        # ═══════════════════════════════════════════════════════════════════════
+        shared_fitnesses = self._apply_fitness_sharing(population, fitnesses)
+        
+        # Elitism: keep top N (based on SHARED fitness for diversity)
         elite_count = max(1, self.config.population_size // 10)
-        sorted_indices = np.argsort(fitnesses)[::-1]  # Descending
+        sorted_indices = np.argsort(shared_fitnesses)[::-1]  # Descending
         
         for i in range(elite_count):
             import copy
             new_population.append(copy.deepcopy(population[sorted_indices[i]]))
         
-        # Get mutation rate
-        mutation_rate = self.get_rdnn_mutation_rate()
-        if mutation_rate is None:
-            mutation_rate = 0.25  # Default
+        # ═══════════════════════════════════════════════════════════════════════
+        # ADAPTIVE GENETIC ALGORITHM (AGA) - Mutation Rate Control
+        # Reference: Wikipedia "Genetic algorithm" - Adaptive GAs section
+        # "AGAs utilize population information to adaptively adjust Pc and Pm"
+        # ═══════════════════════════════════════════════════════════════════════
+        mutation_rate = self._compute_adaptive_mutation_rate(fitnesses)
         
-        # Fill rest with offspring
+        # Fill rest with offspring (use SHARED fitness for selection!)
         while len(new_population) < self.config.population_size:
-            # Tournament selection
-            parent1 = self._tournament_select(population, fitnesses)
-            parent2 = self._tournament_select(population, fitnesses)
+            # Tournament selection (use shared_fitnesses for diversity pressure)
+            parent1 = self._tournament_select(population, shared_fitnesses)
+            parent2 = self._tournament_select(population, shared_fitnesses)
             
             # Crossover
             child = self._crossover(parent1, parent2)
@@ -818,6 +1050,69 @@ class EvolutionPipeline:
         
         return new_population
     
+    def _apply_fitness_sharing(
+        self,
+        population: List,
+        fitnesses: List[float],
+        sigma_share: float = 0.15,
+        alpha: float = 1.0
+    ) -> List[float]:
+        """
+        Apply fitness sharing to maintain population diversity.
+        
+        NICHING / SPECIATION Principle:
+        Reference: Goldberg & Richardson (1987) - "Genetic Algorithms with
+        Sharing for Multimodal Function Optimization"
+        
+        Key Insight: Without niching, GA converges to a SINGLE peak.
+        Fitness sharing divides fitness among similar individuals:
+        
+            shared_fitness[i] = fitness[i] / niche_count[i]
+        
+        Where niche_count is how many similar individuals exist.
+        
+        This creates selection pressure AWAY from crowded regions,
+        maintaining exploration of multiple local optima.
+        
+        Args:
+            population: List of genomes
+            fitnesses: Raw fitness values
+            sigma_share: Sharing radius (fraction of search space)
+                        Individuals closer than sigma_share are "neighbors"
+            alpha: Shape parameter (1.0 = linear penalty)
+        
+        Returns:
+            Shared fitness values
+        """
+        n = len(population)
+        if n < 2:
+            return fitnesses
+        
+        shared = np.array(fitnesses, dtype=float)
+        
+        # Compute niche counts for each individual
+        for i in range(n):
+            niche_count = 0.0
+            
+            for j in range(n):
+                # Compute genotype distance
+                dist = self._genome_distance(population[i], population[j])
+                
+                # Sharing function: triangular with radius sigma_share
+                # sh(d) = 1 - (d/sigma_share)^alpha  if d < sigma_share
+                # sh(d) = 0                          otherwise
+                if dist < sigma_share:
+                    sharing = 1.0 - (dist / sigma_share) ** alpha
+                    niche_count += sharing
+            
+            # Avoid division by zero
+            niche_count = max(niche_count, 1.0)
+            
+            # Divide fitness by niche count
+            shared[i] = fitnesses[i] / niche_count
+        
+        return list(shared)
+    
     def _tournament_select(self, population: List, fitnesses: List[float], k: int = 3):
         """Tournament selection."""
         indices = np.random.choice(len(population), size=k, replace=False)
@@ -826,31 +1121,235 @@ class EvolutionPipeline:
         return copy.deepcopy(population[best_idx])
     
     def _crossover(self, parent1, parent2):
-        """Simple crossover between two genomes."""
-        import copy
-        child = copy.deepcopy(parent1)
+        """
+        Crossover between two PlateGenome instances.
         
-        # Exchange some genes from parent2
-        if hasattr(child, 'width') and hasattr(parent2, 'width'):
-            if np.random.random() < 0.5:
-                child.width = parent2.width
-            if np.random.random() < 0.5:
-                child.height = parent2.height
+        Uses PlateGenome.crossover() method if available, falls back to
+        simple blend crossover.
+        
+        CRITICAL: After crossover, enforce structural constraints!
+        """
+        # Use PlateGenome's built-in crossover if available
+        if hasattr(parent1, 'crossover'):
+            alpha = np.random.uniform(0.3, 0.7)  # Random blend ratio
+            child = parent1.crossover(parent2, alpha=alpha)
+        else:
+            # Fallback: simple attribute exchange
+            import copy
+            child = copy.deepcopy(parent1)
+            
+            # Exchange some genes from parent2
+            if hasattr(child, 'length') and hasattr(parent2, 'length'):
+                if np.random.random() < 0.5:
+                    child.length = parent2.length
+                if np.random.random() < 0.5:
+                    child.width = parent2.width
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STRUCTURAL ENFORCEMENT after crossover
+        # Crossover can break structural constraints - fix them!
+        # ═══════════════════════════════════════════════════════════════════════
+        if hasattr(child, 'enforce_structural_support'):
+            child = child.enforce_structural_support()
         
         return child
     
     def _mutate(self, genome, rate: float):
-        """Apply mutation with given rate."""
+        """
+        Apply mutation to genome with given rate.
+        
+        Uses PlateGenome.mutate() method if available, falls back to
+        simple perturbation.
+        
+        CRITICAL: After mutation, enforce structural constraints!
+        Springs MUST stay at corners for structural stability.
+        """
         if np.random.random() > rate:
             return genome
         
-        # Apply small random changes
-        if hasattr(genome, 'width'):
-            genome.width *= np.random.uniform(0.95, 1.05)
-        if hasattr(genome, 'height'):
-            genome.height *= np.random.uniform(0.95, 1.05)
+        # Use PlateGenome's built-in mutate if available
+        if hasattr(genome, 'mutate'):
+            # Adaptive sigma based on mutation rate
+            sigma = rate * 0.1  # Higher rate = larger mutations
+            genome = genome.mutate(sigma_dimensions=sigma)
+        else:
+            # Fallback: simple perturbation
+            if hasattr(genome, 'length'):
+                genome.length *= np.random.uniform(0.95, 1.05)
+            if hasattr(genome, 'width'):
+                genome.width *= np.random.uniform(0.95, 1.05)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STRUCTURAL ENFORCEMENT - Springs must stay at corners!
+        # "Il petalo non sboccia se il gambo non regge"
+        # ═══════════════════════════════════════════════════════════════════════
+        if hasattr(genome, 'enforce_structural_support'):
+            genome = genome.enforce_structural_support()
+        
+        # Also enforce bilateral symmetry for springs/exciters
+        if hasattr(genome, 'enforce_bilateral_symmetry') and getattr(genome, 'enforce_symmetry', True):
+            genome = genome.enforce_bilateral_symmetry()
         
         return genome
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # ADAPTIVE GENETIC ALGORITHM (AGA)
+    # ══════════════════════════════════════════════════════════════════════════
+    
+    def _compute_adaptive_mutation_rate(self, fitnesses: List[float]) -> float:
+        """
+        Compute adaptive mutation rate based on population diversity and stagnation.
+        
+        ADAPTIVE GENETIC ALGORITHM (AGA) Principles:
+        Reference: Wikipedia "Genetic algorithm" - Adaptive GAs section
+        
+        Key Insight: GAs converge to LOCAL optima. To escape local optima:
+        1. INCREASE mutation when population is homogeneous (low diversity)
+        2. INCREASE mutation when fitness is stagnating (no improvement)
+        3. DECREASE mutation when making progress (exploit good solutions)
+        
+        Formula:
+            mutation_rate = base_rate * diversity_factor * stagnation_factor
+        
+        Where:
+        - base_rate: 0.15-0.30 typical (Machine Learning Mastery: ~20%)
+        - diversity_factor: 1.0-2.0 (boost when diversity is low)
+        - stagnation_factor: 1.0-3.0 (boost when stuck)
+        
+        Returns:
+            Adaptive mutation rate [0.05, 0.60]
+        """
+        base_rate = self.config.mutation_rate  # Default 0.25
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # FACTOR 1: Population Diversity (fitness variance)
+        # Low variance = population converged = need more exploration
+        # ═══════════════════════════════════════════════════════════════════════
+        if len(fitnesses) > 1:
+            fitness_std = np.std(fitnesses)
+            fitness_mean = np.mean(fitnesses)
+            
+            # Coefficient of variation (normalized diversity)
+            cv = fitness_std / (abs(fitness_mean) + 1e-10)
+            
+            # Low CV → increase mutation (up to 2x)
+            # CV < 0.05: very homogeneous → 2.0x mutation
+            # CV > 0.20: diverse → 1.0x mutation (normal)
+            diversity_factor = np.clip(2.0 - cv * 10, 1.0, 2.0)
+        else:
+            diversity_factor = 1.0
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # FACTOR 2: Stagnation (generations without improvement)
+        # More stagnation = stuck at local optimum = need shock
+        # ═══════════════════════════════════════════════════════════════════════
+        stall_ratio = self.state.stall_count / max(1, self.config.fitness_stall_threshold)
+        
+        # Stagnation factor: 1.0 → 3.0 as stall increases
+        # At 3x stall threshold → mutation rate triples
+        stagnation_factor = 1.0 + min(stall_ratio, 2.0)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # FACTOR 3: RDNN Suggestion (if available)
+        # Neural network may have learned better rates for this landscape
+        # ═══════════════════════════════════════════════════════════════════════
+        rdnn_rate = self.get_rdnn_mutation_rate()
+        rdnn_factor = 1.0
+        if rdnn_rate is not None:
+            # Blend RDNN suggestion with adaptive rate
+            rdnn_factor = rdnn_rate / base_rate  # Relative adjustment
+            rdnn_factor = np.clip(rdnn_factor, 0.5, 2.0)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # COMBINE FACTORS
+        # ═══════════════════════════════════════════════════════════════════════
+        adaptive_rate = base_rate * diversity_factor * stagnation_factor * rdnn_factor
+        
+        # Clamp to reasonable range [5%, 60%]
+        adaptive_rate = np.clip(adaptive_rate, 0.05, 0.60)
+        
+        # Log significant adjustments
+        if adaptive_rate > base_rate * 1.5:
+            logger.info(
+                f"AGA: Mutation rate boosted to {adaptive_rate:.2f} "
+                f"(diversity={diversity_factor:.1f}x, stagnation={stagnation_factor:.1f}x)"
+            )
+        
+        return float(adaptive_rate)
+    
+    def _compute_population_diversity(self, population: List) -> float:
+        """
+        Compute genotype diversity in population.
+        
+        Measures how different individuals are from each other.
+        Used for niching/speciation.
+        
+        Returns:
+            Diversity score [0, 1] where 1 = maximum diversity
+        """
+        if len(population) < 2:
+            return 1.0
+        
+        # Sample pairwise distances
+        n_samples = min(20, len(population) * (len(population) - 1) // 2)
+        distances = []
+        
+        for _ in range(n_samples):
+            i, j = np.random.choice(len(population), size=2, replace=False)
+            dist = self._genome_distance(population[i], population[j])
+            distances.append(dist)
+        
+        if not distances:
+            return 1.0
+        
+        # Normalize: mean distance / max possible distance
+        mean_dist = np.mean(distances)
+        # Assume max distance ~ 1.0 for normalized genomes
+        diversity = min(mean_dist, 1.0)
+        
+        return float(diversity)
+    
+    def _genome_distance(self, g1, g2) -> float:
+        """
+        Compute distance between two genomes.
+        
+        Used for diversity calculation and niching.
+        """
+        distance = 0.0
+        n_genes = 0
+        
+        # Dimension genes
+        if hasattr(g1, 'length') and hasattr(g2, 'length'):
+            distance += abs(g1.length - g2.length) / 2.0  # Normalize by ~max length
+            n_genes += 1
+        
+        if hasattr(g1, 'width') and hasattr(g2, 'width'):
+            distance += abs(g1.width - g2.width) / 1.0  # Normalize by ~max width
+            n_genes += 1
+        
+        # Exciter positions
+        if hasattr(g1, 'exciters') and hasattr(g2, 'exciters'):
+            e1 = g1.exciters
+            e2 = g2.exciters
+            
+            for i in range(min(len(e1), len(e2))):
+                dx = abs(e1[i].x - e2[i].x)
+                dy = abs(e1[i].y - e2[i].y)
+                distance += np.sqrt(dx**2 + dy**2)
+                n_genes += 1
+        
+        # Spring positions
+        if hasattr(g1, 'spring_supports') and hasattr(g2, 'spring_supports'):
+            s1 = g1.spring_supports
+            s2 = g2.spring_supports
+            
+            for i in range(min(len(s1), len(s2))):
+                dx = abs(s1[i].x - s2[i].x)
+                dy = abs(s1[i].y - s2[i].y)
+                distance += np.sqrt(dx**2 + dy**2)
+                n_genes += 1
+        
+        return distance / max(1, n_genes)
     
     # ══════════════════════════════════════════════════════════════════════════
     # CALLBACKS

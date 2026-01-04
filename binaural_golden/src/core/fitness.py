@@ -44,6 +44,17 @@ from .evolution_logger import (
     setup_evolution_logging,
 )
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# JAX FEM INTEGRATION - Accelerated modal analysis when available
+# Reference: Automatic differentiation enables gradient-based optimization
+# ═══════════════════════════════════════════════════════════════════════════════
+try:
+    from .jax_plate_fem import JAXPlateFEM, HAS_JAX
+    JAX_FEM_AVAILABLE = HAS_JAX
+except ImportError:
+    JAX_FEM_AVAILABLE = False
+    JAXPlateFEM = None
+
 logger = logging.getLogger(__name__)
 evo_logger = logging.getLogger("golden_studio.evolution")
 
@@ -234,6 +245,11 @@ class FitnessResult:
     # This is the KEY metric for multi-objective optimization
     ear_uniformity_score: float = 0.0  # L/R balance [0-1], 1=perfect symmetry
     
+    # SYMMETRY SCORE - Explicit pressure toward bilateral symmetry
+    # GA doesn't naturally converge to symmetry without fitness gradient!
+    # Reference: GA converges to local optima (Wikipedia Genetic Algorithm)
+    symmetry_score: float = 0.0  # Bilateral symmetry [0-1], 1=perfect symmetry
+    
     # Structural diagnostics (NEW!)
     max_deflection_mm: float = 0.0     # Max deflection under person weight
     deflection_is_safe: bool = True     # Deflection < 10mm limit
@@ -274,6 +290,13 @@ class FitnessEvaluator:
     2. Accoppiamento vibrazionale sulla spina dorsale
     3. Peso minimo della tavola
     4. Producibilità della forma
+    
+    JAX ACCELERATION (if available):
+    When use_jax=True and JAX is installed, modal analysis uses
+    differentiable FEM enabling:
+    - Faster eigenvalue computation via JIT compilation
+    - Gradient-based exciter/cutout optimization
+    - Automatic sensitivity analysis (∂f/∂ρ)
     """
     
     def __init__(
@@ -285,6 +308,7 @@ class FitnessEvaluator:
         freq_range: Tuple[float, float] = (20.0, 200.0),
         n_freq_points: int = 50,
         n_modes: int = 15,
+        use_jax: bool = True,  # NEW: Use JAX FEM when available
     ):
         """
         Inizializza evaluator.
@@ -297,6 +321,7 @@ class FitnessEvaluator:
             freq_range: Range frequenze target [Hz]
             n_freq_points: Punti per calcolo risposta
             n_modes: Numero modi per FEM
+            use_jax: Use JAX-accelerated FEM if available (default True)
         """
         self.person = person
         self.objectives = (objectives or ObjectiveWeights()).normalized()
@@ -305,6 +330,13 @@ class FitnessEvaluator:
         self.freq_range = freq_range
         self.n_freq_points = n_freq_points
         self.n_modes = n_modes
+        
+        # JAX FEM setup - disabled by default until optimized for large grids
+        # JAX FEM is slow for first compilation but fast after warmup
+        self.use_jax = use_jax and JAX_FEM_AVAILABLE and False  # DISABLED for now
+        self._jax_fem: Optional[JAXPlateFEM] = None
+        if self.use_jax:
+            logger.info("✅ JAX FEM enabled for accelerated modal analysis")
         
         # ═══════════════════════════════════════════════════════════════════
         # LOG ZONE PRIORITY - Physics: zone weights determine WHERE 
@@ -415,7 +447,8 @@ class FitnessEvaluator:
         result.spine_response = spine_response
         
         # 4. Calcola risposta alla testa/orecchie (30% del peso)
-        head_response = self._compute_head_response(genome, frequencies, mode_shapes)
+        # Use DSP-aware calculation if exciters have DSP params (BLOOM phase)
+        head_response = self._compute_head_response_dsp_aware(genome, frequencies, mode_shapes)
         result.head_response = head_response
         
         # 5. Score: flatness per zona (con zone_weights 70/30)
@@ -451,9 +484,14 @@ class FitnessEvaluator:
         
         # 12. Score: structural integrity (deflection under person weight)
         result.structural_score = self._score_structural_integrity(genome, result)
+        
+        # 13. Score: BILATERAL SYMMETRY - Explicit fitness pressure toward symmetry!
+        # GA doesn't naturally converge to symmetry without this!
+        result.symmetry_score = self._score_symmetry(genome)
 
         # Score totale pesato
         # CRITICAL: Include ear_uniformity with HIGH weight for L/R balance!
+        # NEW: Include symmetry_score for explicit symmetry pressure
         result.total_fitness = (
             self.objectives.flatness * result.flatness_score +
             self.objectives.spine_coupling * result.spine_coupling_score +
@@ -462,7 +500,8 @@ class FitnessEvaluator:
             0.1 * result.exciter_coupling_score +  # Bonus for good exciter placement
             0.05 * result.groove_tuning_score +    # Bonus for effective grooves
             0.08 * result.cutout_tuning_score +    # Bonus for effective cutouts (ABH/lutherie)
-            0.4 * result.ear_uniformity_score      # HIGH weight for L/R balance!
+            0.4 * result.ear_uniformity_score +    # HIGH weight for L/R balance!
+            0.25 * result.symmetry_score           # SYMMETRY PRESSURE (15-25% of total)
         )
         
         # === CRITICAL PENALTY: Plate too short for person ===
@@ -485,6 +524,18 @@ class FitnessEvaluator:
             result.total_fitness *= (1.0 - structural_penalty * 0.5)  # Up to 50% reduction
             logger.warning(
                 f"Structural penalty: deflection={result.max_deflection_mm:.1f}mm > 10mm limit"
+            )
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SPRING SUPPORT PENALTY: Springs must cover structural support regions!
+        # PRIORITY: Structural support comes BEFORE acoustic optimization
+        # "Il petalo non sboccia se il gambo non regge"
+        # ═══════════════════════════════════════════════════════════════════
+        spring_penalty = genome.structural_support_penalty()
+        if spring_penalty > 0.2:  # More than 20% penalty means poor coverage
+            result.total_fitness *= (1.0 - spring_penalty * 0.6)  # Up to 60% reduction!
+            logger.warning(
+                f"Spring support penalty: {spring_penalty*100:.0f}% - springs not covering corners!"
             )
         
         # ═══════════════════════════════════════════════════════════════════
@@ -540,7 +591,7 @@ class FitnessEvaluator:
         return result, obj_vec
     
     # ─────────────────────────────────────────────────────────────────────────
-    # Calcolo Modi Propri (FEM Semplificato)
+    # Calcolo Modi Propri (FEM Semplificato o JAX-Accelerato)
     # ─────────────────────────────────────────────────────────────────────────
     
     def _compute_modes(
@@ -550,10 +601,121 @@ class FitnessEvaluator:
         """
         Calcola frequenze e modi propri.
         
-        Usa approssimazione analitica per piastra rettangolare:
-        f_mn = (π/2) * sqrt(D/(ρh)) * ((m/L)² + (n/W)²)
+        BACKEND SELECTION:
+        1. JAX FEM (if use_jax=True and available): Differentiable, JIT-compiled
+        2. Analytical (fallback): Fast approximation for rectangular plates
         
+        Formula analitica: f_mn = (π/2) * sqrt(D/(ρh)) * ((m/L)² + (n/W)²)
         Con correzione per massa persona distribuita.
+        """
+        # Try JAX FEM first if enabled
+        if self.use_jax and JAX_FEM_AVAILABLE:
+            try:
+                return self._compute_modes_jax(genome)
+            except Exception as e:
+                logger.debug(f"JAX FEM fallback to analytical: {e}")
+        
+        # Fallback to analytical
+        return self._compute_modes_analytical(genome)
+    
+    def _compute_modes_jax(
+        self,
+        genome: PlateGenome
+    ) -> Tuple[List[float], np.ndarray]:
+        """
+        Compute modes using JAX-accelerated FEM.
+        
+        Benefits:
+        - JIT compilation for speed after warmup
+        - Automatic differentiation for gradient-based optimization
+        - Native numpy compatibility
+        """
+        L = genome.length
+        W = genome.width
+        h = genome.thickness_base
+        
+        # Create or update JAX FEM solver
+        if self._jax_fem is None or \
+           abs(self._jax_fem.config.length - L) > 0.01 or \
+           abs(self._jax_fem.config.width - W) > 0.01:
+            # Mesh resolution: ~40mm spacing
+            nx = max(20, int(L * 25))  # ~25 elements per meter
+            ny = max(12, int(W * 20))  # ~20 elements per meter
+            
+            self._jax_fem = JAXPlateFEM(
+                length=L,
+                width=W,
+                thickness=h,
+                E=self.material.E_longitudinal,
+                rho=self.material.density,
+                nx=nx,
+                ny=ny,
+            )
+        
+        # Create density field (uniform for now, cutouts can be added later)
+        # TODO: Convert cutouts to density field holes
+        density = np.ones((self._jax_fem.config.nx, self._jax_fem.config.ny))
+        
+        # Apply cutout regions as near-zero density
+        if genome.cutouts:
+            for cutout in genome.cutouts:
+                # Convert cutout position to grid indices
+                cx_idx = int(cutout.x * (self._jax_fem.config.nx - 1))
+                cy_idx = int(cutout.y * (self._jax_fem.config.ny - 1))
+                # Cutout radius in grid cells
+                rx = max(1, int(cutout.width * self._jax_fem.config.nx / 2))
+                ry = max(1, int(cutout.height * self._jax_fem.config.ny / 2))
+                
+                for i in range(-rx, rx + 1):
+                    for j in range(-ry, ry + 1):
+                        xi, yj = cx_idx + i, cy_idx + j
+                        if 0 <= xi < self._jax_fem.config.nx and \
+                           0 <= yj < self._jax_fem.config.ny:
+                            # Ellipse check
+                            if (i/rx)**2 + (j/ry)**2 <= 1.0:
+                                density[xi, yj] = 1e-6  # Near-zero for void
+        
+        # Compute frequencies
+        frequencies = self._jax_fem.compute_frequencies(density, self.n_modes)
+        
+        # Apply person mass correction
+        person_mass_factor = self._compute_person_mass_correction(genome)
+        frequencies = [f * person_mass_factor for f in frequencies]
+        
+        # Compute mode shapes (simplified grid)
+        nx, ny = self._jax_fem.config.nx, self._jax_fem.config.ny
+        x = np.linspace(0, 1, nx)
+        y = np.linspace(0, 1, ny)
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        mode_shapes = []
+        for idx, freq in enumerate(frequencies):
+            # Approximate mode shape from frequency
+            m = idx // 5 + 1
+            n = idx % 5 + 1
+            shape = np.sin(m * np.pi * X) * np.sin(n * np.pi * Y)
+            mode_shapes.append(shape)
+        
+        return list(frequencies), np.array(mode_shapes)
+    
+    def _compute_person_mass_correction(self, genome: PlateGenome) -> float:
+        """Compute frequency correction factor for person mass."""
+        L, W, h = genome.length, genome.width, genome.thickness_base
+        rho_plate = self.material.density * h
+        person_mass_per_area = self.person.weight_kg / (L * W)
+        rho_total = rho_plate + 0.6 * person_mass_per_area  # 60% effective
+        
+        # Frequency scales as sqrt(1/total_mass)
+        return np.sqrt(rho_plate / rho_total)
+    
+    def _compute_modes_analytical(
+        self,
+        genome: PlateGenome
+    ) -> Tuple[List[float], np.ndarray]:
+        """
+        Analytical mode computation (fallback).
+        
+        Uses Kirchhoff plate theory for rectangular plates.
         """
         L = genome.length
         W = genome.width
@@ -710,6 +872,194 @@ class FitnessEvaluator:
         
         # Return correction factor (typically 0.85 - 1.0)
         return max(0.85, 1.0 + total_correction)
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # DSP Parameters Application (Phase 2 - BLOOM)
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    def _get_exciter_complex_contribution(
+        self,
+        exciter,
+        frequency_hz: float,
+        modal_response: float
+    ) -> complex:
+        """
+        Calculate complex contribution of an exciter including DSP params.
+        
+        DSP parameters (phase, gain, delay) affect the driving force:
+        - gain_db: Amplitude multiplier (linear: 10^(gain_db/20))
+        - phase_deg: Direct phase shift [degrees]
+        - delay_ms: Additional phase shift = 2π * f * delay_ms / 1000
+        
+        Args:
+            exciter: ExciterPosition with DSP params
+            frequency_hz: Current frequency
+            modal_response: Modal amplitude at this point (real)
+        
+        Returns:
+            Complex contribution including phase effects
+        """
+        # Get DSP parameters (with defaults for legacy data)
+        gain_db = getattr(exciter, 'gain_db', 0.0)
+        phase_deg = getattr(exciter, 'phase_deg', 0.0)
+        delay_ms = getattr(exciter, 'delay_ms', 0.0)
+        
+        # Linear gain
+        gain_linear = 10 ** (gain_db / 20)
+        
+        # Total phase: exciter phase + delay-induced phase
+        # Delay causes frequency-dependent phase: φ = 2π * f * t
+        delay_phase_deg = 360.0 * frequency_hz * delay_ms / 1000.0
+        total_phase_deg = phase_deg + delay_phase_deg
+        total_phase_rad = np.radians(total_phase_deg)
+        
+        # Complex phasor: amplitude * e^(j*phase)
+        complex_amplitude = gain_linear * modal_response
+        contribution = complex_amplitude * np.exp(1j * total_phase_rad)
+        
+        return contribution
+    
+    def _compute_zone_response_with_dsp(
+        self,
+        genome: PlateGenome,
+        frequencies: List[float],
+        mode_shapes: np.ndarray,
+        zone_positions: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute zone response INCLUDING exciter DSP parameters.
+        
+        This is the DSP-aware version that considers:
+        - Each exciter's position and modal coupling
+        - Phase shifts (direct + delay-induced)
+        - Gain adjustments
+        - Interference patterns between exciters
+        
+        Args:
+            genome: PlateGenome with exciters
+            frequencies: Modal frequencies [Hz]
+            mode_shapes: Array (n_modes, nx, ny)
+            zone_positions: Array (n_points, 2) normalized positions
+        
+        Returns:
+            Array (n_points, n_freq) with response magnitude
+        """
+        n_points = len(zone_positions)
+        n_freq = len(self.test_frequencies)
+        response = np.zeros((n_points, n_freq))
+        
+        zeta = self.material.damping_ratio
+        
+        if len(mode_shapes) > 0:
+            nx, ny = mode_shapes.shape[1], mode_shapes.shape[2]
+        else:
+            return response
+        
+        # Get exciters from genome
+        exciters = genome.exciters if hasattr(genome, 'exciters') else []
+        
+        for pos_idx, (x_norm, y_norm) in enumerate(zone_positions):
+            # Grid indices for measurement point
+            ix_meas = min(int(x_norm * nx), nx - 1)
+            iy_meas = min(int(y_norm * ny), ny - 1)
+            
+            for f_idx, f in enumerate(self.test_frequencies):
+                omega = 2 * np.pi * f
+                
+                # Complex sum of all exciter contributions
+                total_complex = 0.0 + 0.0j
+                
+                for mode_idx, f_n in enumerate(frequencies):
+                    if mode_idx >= len(mode_shapes):
+                        continue
+                        
+                    omega_n = 2 * np.pi * f_n
+                    
+                    # Modal transfer function (magnitude)
+                    H_mag = 1.0 / np.sqrt(
+                        (1 - (omega/omega_n)**2)**2 + 
+                        (2 * zeta * omega/omega_n)**2
+                    )
+                    
+                    # Modal phase (near resonance: ~90°)
+                    # Below resonance: ~0°, above: ~180°
+                    freq_ratio = omega / omega_n
+                    H_phase = np.arctan2(
+                        2 * zeta * freq_ratio,
+                        1 - freq_ratio**2
+                    )
+                    
+                    # Mode shape at measurement point
+                    phi_meas = abs(mode_shapes[mode_idx][ix_meas, iy_meas])
+                    
+                    # Sum contributions from all exciters
+                    for exciter in exciters:
+                        # Exciter position in grid coords
+                        exc_x = exciter.y  # FEM convention: y→x
+                        exc_y = exciter.x
+                        ix_exc = min(int(exc_x * nx), nx - 1)
+                        iy_exc = min(int(exc_y * ny), ny - 1)
+                        
+                        # Mode shape at exciter position (driving efficiency)
+                        phi_exc = abs(mode_shapes[mode_idx][ix_exc, iy_exc])
+                        
+                        # Modal coupling: exciter drives mode → mode responds at point
+                        modal_coupling = phi_exc * phi_meas * H_mag
+                        
+                        # Get complex contribution with DSP effects
+                        exc_contrib = self._get_exciter_complex_contribution(
+                            exciter, f, modal_coupling
+                        )
+                        
+                        # Add modal phase
+                        exc_contrib *= np.exp(1j * H_phase)
+                        
+                        total_complex += exc_contrib
+                
+                # Store magnitude
+                response[pos_idx, f_idx] = abs(total_complex)
+        
+        # Normalize
+        max_val = np.max(response)
+        if max_val > 1e-10:
+            response = response / max_val
+        
+        return response
+    
+    def _compute_head_response_dsp_aware(
+        self,
+        genome: PlateGenome,
+        frequencies: List[float],
+        mode_shapes: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute head response with DSP effects if applicable.
+        
+        This wrapper checks if exciters have non-neutral DSP parameters
+        (gain, phase, delay) and uses the DSP-aware calculation if so.
+        
+        This is important for BLOOM phase where DSP params are evolved.
+        """
+        # Check if any exciter has non-neutral DSP params
+        has_dsp = False
+        if hasattr(genome, 'exciters') and genome.exciters:
+            for exc in genome.exciters:
+                gain = getattr(exc, 'gain_db', 0.0)
+                phase = getattr(exc, 'phase_deg', 0.0)
+                delay = getattr(exc, 'delay_ms', 0.0)
+                if abs(gain) > 0.1 or abs(phase) > 1.0 or abs(delay) > 0.1:
+                    has_dsp = True
+                    break
+        
+        if has_dsp:
+            # Use DSP-aware calculation (complex interference)
+            return self._compute_zone_response_with_dsp(
+                genome, frequencies, mode_shapes, 
+                np.array(self.head_positions)
+            )
+        else:
+            # Use simple modal response (faster, no DSP effects)
+            return self._compute_head_response(genome, frequencies, mode_shapes)
     
     # ─────────────────────────────────────────────────────────────────────────
     # Risposta in Frequenza
@@ -1006,6 +1356,183 @@ class FitnessEvaluator:
         uniformity = 0.50 * level_balance + 0.25 * correlation + 0.25 * spectral_match
         
         return float(np.clip(uniformity, 0.0, 1.0))
+    
+    def _score_symmetry(self, genome: PlateGenome) -> float:
+        """
+        Score for bilateral (left-right) symmetry of plate configuration.
+        
+        WHY THIS IS NEEDED:
+        GAs converge to LOCAL optima, not global optima. Without explicit
+        fitness pressure toward symmetry, random mutations are equally likely
+        to move toward or away from symmetric configurations.
+        
+        Reference: Wikipedia "Genetic algorithm" - limitations section
+        
+        WHAT WE CHECK:
+        1. Spring mirror pairs: spring at x should have mirror at (1-x) at same y
+        2. Exciter mirror pairs: CH1↔CH2 (head L/R), CH3↔CH4 (feet L/R)
+        3. Cutout mirror pairs: cutout at x should have mirror at (1-x)
+        
+        Returns:
+            Score [0, 1] where 1.0 = perfect bilateral symmetry
+        """
+        symmetry_scores = []
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # SPRING SYMMETRY (40% weight) - Critical for balanced support
+        # ═══════════════════════════════════════════════════════════════════════
+        if genome.spring_supports and len(genome.spring_supports) >= 2:
+            spring_score = self._compute_bilateral_score(
+                [(s.x, s.y) for s in genome.spring_supports],
+                tolerance=0.08  # 8% tolerance for "same position"
+            )
+            symmetry_scores.append(('springs', spring_score, 0.40))
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # EXCITER SYMMETRY (40% weight) - Critical for L/R audio balance
+        # CH1↔CH2 (head), CH3↔CH4 (feet) should be mirror pairs
+        # ═══════════════════════════════════════════════════════════════════════
+        if genome.exciters and len(genome.exciters) >= 2:
+            exciter_score = self._compute_exciter_pair_symmetry(genome.exciters)
+            symmetry_scores.append(('exciters', exciter_score, 0.40))
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # CUTOUT SYMMETRY (20% weight) - Acoustic energy focusing
+        # ═══════════════════════════════════════════════════════════════════════
+        if genome.cutouts and len(genome.cutouts) >= 2:
+            cutout_score = self._compute_bilateral_score(
+                [(c.x, c.y) for c in genome.cutouts],
+                tolerance=0.08
+            )
+            symmetry_scores.append(('cutouts', cutout_score, 0.20))
+        
+        if not symmetry_scores:
+            return 0.5  # Neutral if no elements to check
+        
+        # Weighted average
+        total_weight = sum(w for _, _, w in symmetry_scores)
+        weighted_sum = sum(score * weight for _, score, weight in symmetry_scores)
+        
+        return float(weighted_sum / total_weight) if total_weight > 0 else 0.5
+    
+    def _compute_bilateral_score(
+        self,
+        positions: list,
+        tolerance: float = 0.08
+    ) -> float:
+        """
+        Compute bilateral symmetry score for a set of positions.
+        
+        For each position (x, y), check if there's a mirror at (1-x, y).
+        
+        Args:
+            positions: List of (x, y) tuples, normalized 0-1
+            tolerance: Maximum distance to consider a match
+        
+        Returns:
+            Score [0, 1] where 1.0 = all positions have symmetric pairs
+        """
+        if not positions or len(positions) < 2:
+            return 0.5
+        
+        n_matched = 0
+        n_total = len(positions)
+        
+        # Find symmetric pairs
+        used = [False] * n_total
+        
+        for i, (x, y) in enumerate(positions):
+            if used[i]:
+                continue
+            
+            # Mirror position
+            mirror_x = 1.0 - x
+            
+            # Check if already on center line (self-symmetric)
+            if abs(x - 0.5) < tolerance / 2:
+                n_matched += 1
+                used[i] = True
+                continue
+            
+            # Find matching mirror
+            best_j = -1
+            best_dist = float('inf')
+            
+            for j, (x2, y2) in enumerate(positions):
+                if i == j or used[j]:
+                    continue
+                
+                dist = np.sqrt((x2 - mirror_x)**2 + (y2 - y)**2)
+                if dist < best_dist and dist < tolerance:
+                    best_dist = dist
+                    best_j = j
+            
+            if best_j >= 0:
+                # Found a matching pair
+                n_matched += 2
+                used[i] = True
+                used[best_j] = True
+            else:
+                # No match - asymmetric element
+                used[i] = True
+        
+        return n_matched / n_total if n_total > 0 else 0.5
+    
+    def _compute_exciter_pair_symmetry(self, exciters: list) -> float:
+        """
+        Compute symmetry score specifically for exciter channel pairs.
+        
+        Expected pairing:
+        - CH1 (head left, x<0.5) ↔ CH2 (head right, x>0.5)
+        - CH3 (feet left, x<0.5) ↔ CH4 (feet right, x>0.5)
+        
+        Returns:
+            Score [0, 1] where 1.0 = perfect L/R exciter symmetry
+        """
+        # Group by channel
+        by_channel = {e.channel: e for e in exciters if hasattr(e, 'channel')}
+        
+        pair_scores = []
+        
+        # Check head pair (CH1 ↔ CH2)
+        if 1 in by_channel and 2 in by_channel:
+            e1, e2 = by_channel[1], by_channel[2]
+            head_score = self._exciter_pair_symmetry(e1, e2)
+            pair_scores.append(head_score)
+        
+        # Check feet pair (CH3 ↔ CH4)
+        if 3 in by_channel and 4 in by_channel:
+            e3, e4 = by_channel[3], by_channel[4]
+            feet_score = self._exciter_pair_symmetry(e3, e4)
+            pair_scores.append(feet_score)
+        
+        return np.mean(pair_scores) if pair_scores else 0.5
+    
+    def _exciter_pair_symmetry(self, e1, e2) -> float:
+        """
+        Compute symmetry score for a single exciter pair.
+        
+        Perfect symmetry: e1.x + e2.x = 1.0, e1.y = e2.y
+        Also checks DSP parameters for matching.
+        """
+        # Position symmetry (70% weight)
+        x_symmetry = 1.0 - abs((e1.x + e2.x) - 1.0) / 0.2  # Perfect at x1+x2=1
+        y_symmetry = 1.0 - abs(e1.y - e2.y) / 0.1  # Perfect at same y
+        
+        pos_score = 0.5 * np.clip(x_symmetry, 0, 1) + 0.5 * np.clip(y_symmetry, 0, 1)
+        
+        # DSP symmetry (30% weight) - gain and phase should match for stereo balance
+        gain_diff = abs(getattr(e1, 'gain_db', 0) - getattr(e2, 'gain_db', 0))
+        phase_diff = abs(getattr(e1, 'phase_deg', 0) - getattr(e2, 'phase_deg', 0))
+        delay_diff = abs(getattr(e1, 'delay_ms', 0) - getattr(e2, 'delay_ms', 0))
+        
+        gain_score = 1.0 - min(gain_diff / 6.0, 1.0)   # 6dB max difference
+        phase_score = 1.0 - min(phase_diff / 90.0, 1.0)  # 90° max difference
+        delay_score = 1.0 - min(delay_diff / 10.0, 1.0)  # 10ms max difference
+        
+        dsp_score = (gain_score + phase_score + delay_score) / 3
+        
+        return 0.70 * pos_score + 0.30 * dsp_score
     
     def _score_flatness(
         self,
