@@ -11,6 +11,16 @@ Include paper scientifici, algoritmi validati e **cronologia delle conversazioni
 ~/.config/surrealdb/knowledge.db/
 ```
 
+## Scripts Disponibili
+
+```
+~/.config/surrealdb/scripts/
+├── knowledge_ingest.py      # Auto-fetch StackOverflow + ArXiv
+├── import_chats_graph_rag.py # Import chat sessions (GraphRAG)
+├── import_chat_sessions.py   # Import sessioni Copilot
+└── classify_lessons.py       # Classificazione contenuti
+```
+
 ## Avvio Server
 
 ```bash
@@ -28,21 +38,27 @@ curl -X POST http://localhost:8000/sql \
   -H "Authorization: Basic cm9vdDpyb290" \
   -H "surreal-ns: research" \
   -H "surreal-db: knowledge" \
-  -H "Content-Type: text/plain" \
+  -H "Accept: application/json" \
   -d "YOUR_QUERY_HERE"
 ```
 
-## Contenuto Database
+## Contenuto Database (Aggiornato 2026-01-04)
 
 | Tabella | Records | Descrizione |
 |---------|---------|-------------|
-| **paper** | 86+ | Paper scientifici con abstract |
-| **algorithm** | 6+ | Algoritmi validati |
-| **concept** | vari | Concetti distillati |
-| **chat_session** | 91+ | Sessioni Copilot chat |
-| **chat_message** | 2340+ | Messaggi Q&A completi |
+| **paper** | 86 | Paper scientifici (acustica, DSP, psicoacustica) |
+| **algorithm** | 6 | Algoritmi validati con success_metrics |
+| **knowledge** | 25 | StackOverflow + ArXiv content |
+| **chat_session** | 98 | Sessioni conversazionali complete |
+| **chat_message** | 2615 | Messaggi Q&A da sessioni Copilot |
 | **chat_agent** | 5 | Agenti usati (agent, vscode, etc) |
 | **chat_model** | 13 | Modelli LLM usati |
+
+## Architettura GraphRAG
+
+- **NO pre-classificazione** - dati raw con metadata ricchi
+- Agent inferisce contesto dal contenuto conversazionale
+- **Full-text search con BM25** su user_text e assistant_text
 
 ## Query RAG per Conversazioni Passate
 
