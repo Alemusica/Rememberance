@@ -11,6 +11,7 @@
 ║   • StructuralScorer: Deflection and peninsula analysis                      ║
 ║   • ManufacturabilityScorer: CNC/production feasibility                      ║
 ║   • ExciterScorer: Exciter placement modal coupling                          ║
+║   • JABCoherenceScorer: Phase coherence for binaural (NEW 2025-01-04)        ║
 ║                                                                              ║
 ║   SOLID Principles applied:                                                  ║
 ║   • SRP: Each scorer has single responsibility                               ║
@@ -28,6 +29,7 @@ from .spine_coupling import SpineCouplingScorer
 from .structural import StructuralScorer
 from .manufacturability import ManufacturabilityScorer
 from .exciter import ExciterScorer
+from .jab_coherence import JABCoherenceScorer, create_jab_scorer
 
 __all__ = [
     # Protocol and Base
@@ -41,4 +43,6 @@ __all__ = [
     'StructuralScorer',
     'ManufacturabilityScorer',
     'ExciterScorer',
+    'JABCoherenceScorer',
+    'create_jab_scorer',
 ]

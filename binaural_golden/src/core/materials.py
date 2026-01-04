@@ -328,6 +328,65 @@ MATERIALS: Dict[str, Material] = {
         damping_ratio=0.035,
         description="Denser than MDF, more rigid."
     ),
+    
+    # === BUDGET MATERIALS (Brico/DIY stores) ===
+    # Data from manufacturer specs and EN standards
+    "osb": Material(
+        name="OSB (Oriented Strand Board)",
+        density=620.0,              # EN 300 typical
+        E_longitudinal=4.9e9,       # Along surface strands
+        E_transverse=1.9e9,         # Across strands (anisotropic!)
+        poisson_ratio=0.30,
+        damping_ratio=0.045,        # Higher damping from resin
+        description="Budget DIY panel. Anisotropic (orient strands along length)."
+    ),
+    "chipboard": Material(
+        name="Chipboard (Truciolare/Particleboard)",
+        density=680.0,
+        E_longitudinal=2.8e9,       # Lower stiffness
+        E_transverse=2.8e9,         # Isotropic
+        poisson_ratio=0.30,
+        damping_ratio=0.050,        # High damping
+        description="Very cheap DIY. Lower stiffness, OK for prototypes."
+    ),
+    "melamine_chipboard": Material(
+        name="Melamine Chipboard (Nobilitato)",
+        density=700.0,
+        E_longitudinal=3.2e9,       # Slightly stiffer from coating
+        E_transverse=3.2e9,
+        poisson_ratio=0.28,
+        damping_ratio=0.045,
+        description="Coated chipboard (IKEA-style). Surface adds stiffness."
+    ),
+    "phenolic_plywood": Material(
+        name="Phenolic Plywood (Multistrato Fenolico)",
+        density=720.0,
+        E_longitudinal=10.5e9,      # Good stiffness
+        E_transverse=10.5e9,        # Quasi-isotropic
+        poisson_ratio=0.32,
+        damping_ratio=0.022,        # Phenolic resin adds damping
+        description="Waterproof plywood with phenolic coating. Good for outdoor/humid."
+    ),
+    "poplar_plywood": Material(
+        name="Poplar Plywood (Pioppo)",
+        density=500.0,              # Very light
+        E_longitudinal=8.0e9,
+        E_transverse=8.0e9,
+        poisson_ratio=0.35,
+        damping_ratio=0.030,
+        description="Lightweight, affordable Italian plywood. Good starter material."
+    ),
+    "okoume_plywood": Material(
+        name="Okoumé Marine Plywood",
+        density=480.0,              # Very light, tropical wood
+        E_longitudinal=7.5e9,
+        E_transverse=7.5e9,
+        poisson_ratio=0.32,
+        damping_ratio=0.028,
+        description="Lightweight marine plywood. Boats, guitars, good tone."
+    ),
+    
+    # === HIGH-PERFORMANCE COMPOSITES ===
     "carbon_fiber": Material(
         name="Carbon Fiber Composite",
         density=1600.0,
@@ -336,6 +395,24 @@ MATERIALS: Dict[str, Material] = {
         poisson_ratio=0.30,
         damping_ratio=0.005,
         description="Extremely stiff, lightweight. High-end instruments."
+    ),
+    "fiberglass": Material(
+        name="Fiberglass (GFRP)",
+        density=1800.0,
+        E_longitudinal=25.0e9,
+        E_transverse=25.0e9,
+        poisson_ratio=0.28,
+        damping_ratio=0.015,
+        description="Budget composite. Stiff, moderate damping."
+    ),
+    "honeycomb_sandwich": Material(
+        name="Honeycomb Sandwich Panel",
+        density=120.0,              # Very light!
+        E_longitudinal=3.0e9,       # Lower but excellent stiffness/weight
+        E_transverse=3.0e9,
+        poisson_ratio=0.25,
+        damping_ratio=0.010,
+        description="Aerospace-style panel. Extremely light, good stiffness/weight."
     ),
     
     # === METALS ===
@@ -383,18 +460,35 @@ MATERIALS: Dict[str, Material] = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 MATERIAL_CATEGORIES: Dict[str, MaterialCategory] = {
+    # Softwoods
     "spruce": MaterialCategory.SOFTWOOD,
+    "spruce_sitka": MaterialCategory.SOFTWOOD,
+    "spruce_engelmann": MaterialCategory.SOFTWOOD,
+    "spruce_european": MaterialCategory.SOFTWOOD,
     "cedar": MaterialCategory.SOFTWOOD,
+    # Hardwoods
     "oak": MaterialCategory.HARDWOOD,
     "maple": MaterialCategory.HARDWOOD,
     "walnut": MaterialCategory.HARDWOOD,
     "ash": MaterialCategory.HARDWOOD,
+    # Plywood
     "birch_plywood": MaterialCategory.PLYWOOD,
     "marine_plywood": MaterialCategory.PLYWOOD,
     "bamboo_plywood": MaterialCategory.PLYWOOD,
+    "phenolic_plywood": MaterialCategory.PLYWOOD,
+    "poplar_plywood": MaterialCategory.PLYWOOD,
+    "okoume_plywood": MaterialCategory.PLYWOOD,
+    # Composites (DIY/Budget)
     "mdf": MaterialCategory.COMPOSITE,
     "hdf": MaterialCategory.COMPOSITE,
+    "osb": MaterialCategory.COMPOSITE,
+    "chipboard": MaterialCategory.COMPOSITE,
+    "melamine_chipboard": MaterialCategory.COMPOSITE,
+    # Composites (High-performance)
     "carbon_fiber": MaterialCategory.COMPOSITE,
+    "fiberglass": MaterialCategory.COMPOSITE,
+    "honeycomb_sandwich": MaterialCategory.COMPOSITE,
+    # Metals
     "aluminum": MaterialCategory.METAL,
     "steel": MaterialCategory.METAL,
     "brass": MaterialCategory.METAL,

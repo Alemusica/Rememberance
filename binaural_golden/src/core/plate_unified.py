@@ -33,7 +33,7 @@ from .unified_optimizer import (
 
 # Local imports - Plate-specific
 from .person import Person
-from .plate_genome import PlateGenome, ContourType, ExciterPosition
+from .plate_genome import PlateGenome, ContourType, ExciterPosition, CutoutGene
 from .plate_physics import calculate_plate_modes, mode_shape_grid
 from .fitness import FitnessEvaluator, FitnessResult, ObjectiveWeights, ZoneWeights
 from .analysis_config import get_target_spacing_mm, get_default_config
@@ -323,12 +323,31 @@ class PlateGenomeCreator:
             
             exciters.append(ExciterPosition(x=x, y=y, channel=i))
         
+        # Random cutouts (30% chance of 1-2 cutouts)
+        cutouts = []
+        if np.random.random() < 0.3:
+            n_cutouts = np.random.randint(1, 3)
+            for _ in range(n_cutouts):
+                # CutoutGene uses normalized coordinates [0,1]
+                cx = np.random.uniform(0.2, 0.8)  # Normalized X
+                cy = np.random.uniform(0.2, 0.8)  # Normalized Y
+                size = np.random.uniform(0.03, 0.08)  # 3-8% of plate
+                cutouts.append(CutoutGene(
+                    x=cx,
+                    y=cy,
+                    width=size,
+                    height=size * np.random.uniform(0.8, 1.2),  # Slight aspect variation
+                    shape='ellipse',
+                    rotation=np.random.uniform(0, np.pi) if np.random.random() < 0.3 else 0.0
+                ))
+        
         return PlateGenome(
             length=length,
             width=width,
             thickness_base=thickness,
             contour_type=contour,
             exciters=exciters,
+            cutouts=cutouts,
         )
     
     def crossover(
@@ -425,12 +444,43 @@ class PlateGenomeCreator:
                 channel=1
             )
         
+        # Mutate cutouts (keep, modify, add, or remove)
+        cutouts = []
+        for cut in (genome.cutouts or []):
+            if np.random.random() > 0.1:  # 90% keep (maybe modified)
+                # Cutouts use normalized coordinates [0,1]
+                cx = cut.x + np.random.normal(0, sigma * 0.05)
+                cy = cut.y + np.random.normal(0, sigma * 0.05)
+                cx = np.clip(cx, 0.1, 0.9)
+                cy = np.clip(cy, 0.1, 0.9)
+                cutouts.append(CutoutGene(
+                    x=cx,
+                    y=cy,
+                    width=cut.width,
+                    height=cut.height,
+                    shape=cut.shape,
+                    rotation=cut.rotation
+                ))
+        
+        # 15% chance to add new cutout (max 3)
+        if np.random.random() < 0.15 and len(cutouts) < 3:
+            size = np.random.uniform(0.03, 0.08)
+            cutouts.append(CutoutGene(
+                x=np.random.uniform(0.2, 0.8),
+                y=np.random.uniform(0.2, 0.8),
+                width=size,
+                height=size * np.random.uniform(0.8, 1.2),
+                shape='ellipse',
+                rotation=np.random.uniform(0, np.pi) if np.random.random() < 0.3 else 0.0
+            ))
+        
         return PlateGenome(
             length=length,
             width=width,
             thickness_base=thickness,
             contour_type=contour,
             exciters=exciters,
+            cutouts=cutouts if cutouts else None,
         )
 
 

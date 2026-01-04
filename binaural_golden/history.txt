@@ -1,0 +1,4 @@
+#V2
+SELECT count() FROM paper GROUP ALL
+SELECT cite_key, title, project_relevance FROM paper WHERE title CONTAINS 'genetic' OR title CONTAINS 'optim' OR title CONTAINS 'evolutionary' OR title CONTAINS 'algorithm'
+SELECT cite_key, title, section FROM paper WHERE title CONTAINS 'memory' OR abstract CONTAINS 'memory' OR abstract CONTAINS 'experience' OR abstract CONTAINS 'transfer'

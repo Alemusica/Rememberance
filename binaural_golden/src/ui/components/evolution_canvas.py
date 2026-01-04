@@ -110,7 +110,7 @@ class EvolutionCanvas(tk.Canvas):
         # Throttling for rapid updates during evolution
         self._last_draw_time: float = 0.0
         self._pending_refresh_id: Optional[str] = None
-        self._min_draw_interval_ms: int = 100  # Max 10 FPS during evolution
+        self._min_draw_interval_ms: int = 333  # Max 3 FPS during evolution (avoid GPU race)
         
         # Display options
         self._show_grid = True
@@ -783,8 +783,10 @@ class EvolutionCanvas(tk.Canvas):
             self._draw_f_hole(cut_cx, cut_cy, cut_rx, cut_ry, rotation, fill_color, outline_color)
             
         elif shape == 'slot':
-            # Slot: very elongated rectangle
-            self._draw_rotated_rect(cut_cx, cut_cy, cut_rx * 2, cut_ry * 0.3, rotation, fill_color, outline_color)
+            # Slot: elongated rectangle (CNC realistic)
+            # NO multiplication - cut_rx/cut_ry already represent actual size
+            # Slot is naturally elongated: height > width in genome
+            self._draw_rotated_rect(cut_cx, cut_cy, cut_rx, cut_ry * 0.5, rotation, fill_color, outline_color)
             
         elif shape == 'stadium':
             # Stadium: slot with rounded ends (oblong/discorectangle)

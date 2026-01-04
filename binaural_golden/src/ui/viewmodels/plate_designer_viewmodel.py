@@ -33,6 +33,13 @@ from core.evolutionary_optimizer import (
     EvolutionState,
     SelectionMethod,
 )
+# EvolutionPipeline with RDNN, LTM, Pokayoke integration
+from core.evolution_pipeline import (
+    EvolutionPipeline,
+    PipelineConfig,
+    PipelineMode,
+    PipelineResult,
+)
 
 # Pymoo NSGA-II (multi-objective)
 try:
@@ -142,6 +149,7 @@ class PlateDesignerState:
     
     # Algorithm selection: GA custom vs pymoo NSGA-II/III
     use_nsga2: bool = False  # False = GA custom, True = pymoo NSGA-II (Pareto front)
+    use_pipeline: bool = True  # True = EvolutionPipeline with RDNN/LTM memory (DEFAULT)
     
     # Zone weights for frequency response optimization (spine vs head)
     spine_weight: float = 0.70  # 70% priority on spine flatness
@@ -149,6 +157,9 @@ class PlateDesignerState:
     
     # Contour type for plate shape
     contour_type: str = "ORGANIC"  # Default: smooth organic curves
+    
+    # Early stopping control
+    force_all_generations: bool = True  # True = run ALL generations (no early stopping)
     
     # Advanced optimization weights (from radar widget)
     energy_weight: float = 0.7   # Vibration intensity
@@ -225,6 +236,7 @@ class PlateDesignerViewModel:
         
         # Evolution components
         self._optimizer: Optional[EvolutionaryOptimizer] = None
+        self._pipeline: Optional[EvolutionPipeline] = None  # Pipeline with RDNN/LTM
         self._evolution_thread: Optional[threading.Thread] = None
         self._update_queue: queue.Queue = queue.Queue()
         
@@ -313,7 +325,9 @@ class PlateDesignerViewModel:
         spring_count: int = 5,
         spring_stiffness_kn_m: float = 10.0,
         spring_damping_ratio: float = 0.10,
-        spring_clearance_mm: float = 70.0
+        spring_clearance_mm: float = 70.0,
+        # Early stopping control
+        force_all_generations: bool = True  # True = disable early stopping
     ):
         """Configure evolution parameters including spring supports.
         
@@ -335,6 +349,8 @@ class PlateDesignerViewModel:
             self._state.spring_stiffness_kn_m = spring_stiffness_kn_m
             self._state.spring_damping_ratio = spring_damping_ratio
             self._state.spring_clearance_mm = spring_clearance_mm
+            # Early stopping
+            self._state.force_all_generations = force_all_generations
         self._notify_observers()
     
     def set_algorithm(self, use_nsga2: bool):
@@ -476,10 +492,53 @@ class PlateDesignerViewModel:
         )
         
         # ═══════════════════════════════════════════════════════════════════════
-        # ALGORITHM SELECTION: GA custom vs pymoo NSGA-II
+        # ALGORITHM SELECTION: Pipeline (RDNN/LTM) vs NSGA-II vs GA
         # ═══════════════════════════════════════════════════════════════════════
         
-        if self._state.use_nsga2 and PYMOO_AVAILABLE:
+        if self._state.use_pipeline:
+            # Use EvolutionPipeline with full RDNN/LTM/Pokayoke integration
+            # This is the "intelligent" optimizer with cross-run memory
+            
+            # Determine contour string for pipeline (None = AUTO)
+            contour_str = None
+            if self._state.contour_type != "AUTO":
+                contour_str = self._state.contour_type
+            
+            # If force_all_generations is True, set very high stall threshold
+            # to effectively disable early stopping
+            stall_threshold = 9999 if self._state.force_all_generations else 10
+            
+            pipeline_config = PipelineConfig(
+                mode=PipelineMode.HEADLESS,  # No user interaction during evolution
+                enable_pokayoke=True,   # Phase 1: Anomaly detection
+                enable_physics_rules=True,  # Phase 3: Hybrid physics rules
+                enable_rdnn=True,       # Phase 4: PyTorch recurrent memory
+                enable_ltm=True,        # Phase 5: Long-term knowledge distillation
+                enable_templates=True,  # Phase 6: Scoring templates
+                template_name="VAT Therapy",  # Vibroacoustic therapy template
+                population_size=self._state.population_size,
+                n_generations=self._state.max_generations,
+                mutation_rate=self._state.mutation_rate,
+                # Pass UI constraints to pipeline
+                max_cutouts=self._state.max_cutouts,
+                max_grooves=self._state.max_grooves,
+                fixed_contour=contour_str,  # RECTANGLE, ELLIPSE, etc. or None
+                log_every_n_generations=5,
+                fitness_stall_threshold=stall_threshold,  # Force all gens if user wants
+            )
+            
+            self._pipeline = EvolutionPipeline(
+                config=pipeline_config,
+                person=self._state.person,
+            )
+            
+            # Start pipeline thread
+            self._evolution_thread = threading.Thread(
+                target=self._run_pipeline_evolution,
+                daemon=True
+            )
+            
+        elif self._state.use_nsga2 and PYMOO_AVAILABLE:
             # Use pymoo NSGA-II for Pareto front multi-objective optimization
             pymoo_config = PymooConfig(
                 algorithm="nsga2",
@@ -501,7 +560,7 @@ class PlateDesignerViewModel:
                 daemon=True
             )
         else:
-            # Use custom GA (single weighted objective)
+            # Use custom GA (single weighted objective) - LEGACY
             config = EvolutionConfig(
                 population_size=self._state.population_size,
                 n_generations=self._state.max_generations,
@@ -533,6 +592,10 @@ class PlateDesignerViewModel:
     
     def stop_evolution(self):
         """Stop evolution."""
+        # Request pipeline to stop (if using pipeline)
+        if self._pipeline is not None:
+            self._pipeline.request_stop()
+        
         with self._lock:
             self._state.is_running = False
             self._state.phase = EvolutionPhase.STOPPED
@@ -656,6 +719,130 @@ class PlateDesignerViewModel:
             import traceback
             error_details = f"{str(e)}\n{traceback.format_exc()}"
             print(f"[NSGA-II Error] {error_details}")
+            self._set_error(str(e))
+        
+        self._update_queue.put(True)
+    
+    def _run_pipeline_evolution(self):
+        """
+        Run EvolutionPipeline with full RDNN/LTM/Pokayoke integration.
+        
+        This is the "intelligent" evolution that learns from previous runs
+        and applies physics-based rules for better convergence.
+        
+        Integrates:
+        - Phase 1: PokayokeObserver (anomaly detection)
+        - Phase 2: ExciterGene (staged activation)
+        - Phase 3: PhysicsRulesEngine (hybrid physics + learned rules)
+        - Phase 4: RDNNMemory (PyTorch recurrent with warm start)
+        - Phase 5: LTMDistiller (long-term knowledge extraction)
+        - Phase 6: ScoringTemplates (VAT therapy fitness)
+        """
+        try:
+            with self._lock:
+                self._state.phase = EvolutionPhase.EVOLVING
+                self._state.evolution_logs.append(
+                    "🧠 Pipeline: Initializing RDNN/LTM memory system..."
+                )
+                self._state.log_count += 1
+            
+            # Initialize pipeline components
+            self._pipeline.initialize()
+            
+            # Log active components
+            active_components = []
+            if self._pipeline.observer:
+                active_components.append("Pokayoke")
+            if self._pipeline.physics_engine:
+                active_components.append("PhysicsRules")
+            if self._pipeline.rdnn:
+                active_components.append("RDNN")
+            if self._pipeline.ltm_distiller:
+                active_components.append("LTM")
+            if self._pipeline.template:
+                active_components.append("Templates")
+            
+            with self._lock:
+                self._state.evolution_logs.append(
+                    f"✅ Active: {', '.join(active_components)}"
+                )
+                self._state.log_count += 1
+            
+            self._notify_observers()
+            
+            # Define callback for per-generation updates
+            def pipeline_callback(gen: int, best_fitness: float, best_genome):
+                with self._lock:
+                    self._state.generation = gen
+                    self._state.best_genome = best_genome
+                    self._state.best_fitness_value = best_fitness
+                    self._state.elapsed_time = time.time() - self._state.start_time
+                    
+                    # Calculate ETA
+                    if gen > 0:
+                        time_per_gen = self._state.elapsed_time / gen
+                        remaining_gens = self._state.max_generations - gen
+                        self._state.eta_seconds = time_per_gen * remaining_gens
+                    
+                    # Create fitness snapshot for charts
+                    # Note: PipelineResult doesn't have component scores yet
+                    snapshot = FitnessSnapshot(
+                        generation=gen,
+                        total=best_fitness,
+                        flatness=0.0,  # Pipeline doesn't expose these yet
+                        spine_coupling=0.0,
+                        low_mass=0.0,
+                        diversity=0.0,
+                        timestamp=time.time(),
+                    )
+                    self._state.fitness_history.append(snapshot)
+                
+                self._update_queue.put(True)
+            
+            # Add callback to pipeline
+            self._pipeline.add_generation_callback(pipeline_callback)
+            
+            # Run evolution with pipeline
+            result: PipelineResult = self._pipeline.run()
+            
+            # Update final state
+            with self._lock:
+                if self._state.is_running:
+                    self._state.phase = EvolutionPhase.CONVERGED
+                self._state.is_running = False
+                self._state.best_genome = result.best_genome
+                self._state.best_fitness_value = result.best_fitness
+                self._state.generation = result.total_generations
+                self._state.elapsed_time = result.runtime_seconds
+                
+                # Store pipeline result for access to RDNN state, distilled knowledge
+                self._pipeline_result = result
+                
+                # Log completion with memory info
+                memory_info = ""
+                if result.rdnn_state is not None:
+                    memory_info = " (RDNN state saved for next run)"
+                if result.distilled_knowledge is not None:
+                    memory_info += " (LTM patterns distilled)"
+                
+                self._state.evolution_logs.append(
+                    f"✅ Pipeline complete: fitness={result.best_fitness:.4f}, "
+                    f"evals={result.total_evaluations}, "
+                    f"time={result.runtime_seconds:.1f}s{memory_info}"
+                )
+                self._state.log_count += 1
+                
+                # Log anomalies if any
+                if result.anomalies:
+                    self._state.evolution_logs.append(
+                        f"⚠️ {len(result.anomalies)} anomalies detected during evolution"
+                    )
+                    self._state.log_count += 1
+            
+        except Exception as e:
+            import traceback
+            error_details = f"{str(e)}\n{traceback.format_exc()}"
+            print(f"[Pipeline Error] {error_details}")
             self._set_error(str(e))
         
         self._update_queue.put(True)

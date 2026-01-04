@@ -2032,14 +2032,17 @@ class PlateGenome:
         # EXCITERS: Mutate positions AND DSP params for optimal modal coupling
         # Reference: Multi-exciter optimization (Lu 2012, Bai & Liu 2004)
         # DSP params (gain, delay, phase) activated in BLOOM phase
+        # 
+        # BOOSTED rates for faster DSP evolution (2025-01-04):
+        # - Phase/gain/delay need higher mutation to escape local optima
+        # - JAB optimization requires rapid phase exploration
         # ═══════════════════════════════════════════════════════════════════════
-        # Higher mutation rate for visible movement during evolution
         
-        p_mutate_exciter = 0.40  # 40% probability per exciter per generation (was 20%)
-        p_large_move = 0.10      # 10% chance of large repositioning (was 5%)
-        p_mutate_phase = 0.30    # 30% chance to mutate phase
-        p_mutate_gain = 0.25     # 25% chance to mutate gain (BLOOM phase)
-        p_mutate_delay = 0.20    # 20% chance to mutate delay (BLOOM phase)
+        p_mutate_exciter = 0.40  # 40% probability per exciter per generation
+        p_large_move = 0.10      # 10% chance of large repositioning
+        p_mutate_phase = 0.50    # 50% chance to mutate phase (was 30%) - CRITICAL for JAB!
+        p_mutate_gain = 0.40     # 40% chance to mutate gain (was 25%) - L/R balance
+        p_mutate_delay = 0.35    # 35% chance to mutate delay (was 20%) - time alignment
         
         for i, exc in enumerate(new_genome.exciters):
             new_x, new_y = exc.x, exc.y

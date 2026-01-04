@@ -45,6 +45,70 @@ from ui.components.evolution_canvas import (
 from ui.theme import STYLE, configure_ttk_style
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TOOLTIP CLASS - Helpful hints for genetic algorithm parameters
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ToolTip:
+    """
+    Simple tooltip that appears on hover.
+    
+    Usage:
+        ToolTip(widget, "This is a helpful description")
+    """
+    def __init__(self, widget, text: str, delay: int = 500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tipwindow = None
+        self.id = None
+        
+        widget.bind("<Enter>", self._schedule)
+        widget.bind("<Leave>", self._hide)
+        widget.bind("<ButtonPress>", self._hide)
+    
+    def _schedule(self, event=None):
+        """Schedule tooltip to appear after delay."""
+        self._hide()
+        self.id = self.widget.after(self.delay, self._show)
+    
+    def _show(self):
+        """Display tooltip."""
+        if self.tipwindow:
+            return
+        
+        # Position near widget
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        
+        # Style
+        label = tk.Label(
+            tw, text=self.text, 
+            justify='left',
+            background="#333333",
+            foreground="#FFD700",  # Gold text
+            relief='solid',
+            borderwidth=1,
+            font=("SF Pro", 10),
+            padx=8, pady=5,
+            wraplength=350
+        )
+        label.pack()
+    
+    def _hide(self, event=None):
+        """Hide tooltip."""
+        if self.id:
+            self.widget.after_cancel(self.id)
+            self.id = None
+        if self.tipwindow:
+            self.tipwindow.destroy()
+            self.tipwindow = None
+
+
 class PlateDesignerTab(ttk.Frame):
     """
     Tab per design evolutivo tavola vibroacustica.
@@ -172,16 +236,36 @@ class PlateDesignerTab(ttk.Frame):
             textvariable=self._pop_var, width=6
         )
         self._pop_spin.grid(row=0, column=1, padx=5, pady=3)
+        # Tooltip: Population
+        ToolTip(self._pop_spin, 
+            "🧬 POPULATION SIZE\n\n"
+            "How many plate designs exist simultaneously.\n"
+            "• Higher = more exploration, slower\n"
+            "• Lower = faster, but may miss good designs\n\n"
+            "Recommended: 30-50 for balanced search\n"
+            "Use 100+ for complex problems (many cutouts)")
         
         # Generations
         self._create_label(self._config_frame, "Generations:").grid(
             row=1, column=0, padx=5, pady=3, sticky='e')
-        self._gen_var = tk.IntVar(value=50)
+        self._gen_var = tk.IntVar(value=100)  # Default 100 for thorough evolution
         self._gen_spin = ttk.Spinbox(
-            self._config_frame, from_=10, to=200, increment=10,
+            self._config_frame, from_=10, to=500, increment=10,  # Increased max to 500
             textvariable=self._gen_var, width=6
         )
         self._gen_spin.grid(row=1, column=1, padx=5, pady=3)
+        # Tooltip: Generations
+        ToolTip(self._gen_spin,
+            "🔄 GENERATIONS\n\n"
+            "Number of evolution cycles to run.\n"
+            "Each generation:\n"
+            "1. Evaluate all plates (fitness)\n"
+            "2. Select best performers\n"
+            "3. Create offspring via crossover\n"
+            "4. Apply random mutations\n\n"
+            "Recommended: 100-200 for best results\n"
+            "500 = exhaustive search (slow but thorough)\n"
+            "Uses RDNN + LTM for intelligent optimization!")
         
         # Mutation Rate
         self._create_label(self._config_frame, "Mutation:").grid(
@@ -192,6 +276,16 @@ class PlateDesignerTab(ttk.Frame):
             textvariable=self._mutation_var, width=6
         )
         self._mutation_spin.grid(row=2, column=1, padx=5, pady=3)
+        # Tooltip: Mutation
+        ToolTip(self._mutation_spin,
+            "🎲 MUTATION RATE\n\n"
+            "Probability of random changes per gene.\n"
+            "• 0.1 = conservative (small changes)\n"
+            "• 0.3 = balanced (default)\n"
+            "• 0.5+ = aggressive (high exploration)\n\n"
+            "Low: faster convergence, may get stuck\n"
+            "High: more diversity, slower convergence\n\n"
+            "RDNN memory adjusts this automatically!")
         
         # Cutouts (LUTHERIE: fori per accordatura modi, come f-holes violino)
         # Reference: Schleske (2002) "Empirical Tools in Contemporary Violin Making"
@@ -213,6 +307,16 @@ class PlateDesignerTab(ttk.Frame):
             textvariable=self._cutouts_var, width=6, state="normal"  # Enabled by default
         )
         self._cutouts_spin.grid(row=3, column=1, padx=5, pady=3)
+        # Tooltip: Cutouts
+        ToolTip(self._cutouts_spin,
+            "✂️ CUTOUTS (Virtual CNC)\n\n"
+            "Holes in the plate for modal tuning.\n"
+            "Like f-holes in violins (lutherie tradition).\n\n"
+            "• Shape evolves: ellipse, rounded rect, etc.\n"
+            "• Position evolves for optimal modes\n"
+            "• Structural integrity checked each gen\n\n"
+            "Default 4 = 2 per side (violin-like)\n"
+            "More cutouts = more frequency control")
         
         # Tooltip explaining structural validation
         self._cutouts_info = ttk.Label(
@@ -238,6 +342,14 @@ class PlateDesignerTab(ttk.Frame):
             textvariable=self._grooves_var, width=6, state="disabled"  # Disabled by default
         )
         self._grooves_spin.grid(row=4, column=1, padx=5, pady=3)
+        # Tooltip: Grooves
+        ToolTip(self._grooves_spin,
+            "〰️ GROOVES (Fine Tuning)\n\n"
+            "Shallow channels carved into plate surface.\n"
+            "For fine-tuning specific frequencies.\n\n"
+            "⚠️ EXPENSIVE: increases computation time\n"
+            "Enable only for final refinement phase.\n\n"
+            "Each groove adds ~10% eval time")
         
         self._grooves_info = ttk.Label(
             self._config_frame, 
@@ -300,6 +412,21 @@ class PlateDesignerTab(ttk.Frame):
         )
         self._contour_combo.grid(row=6, column=1, padx=5, pady=3)
         self._contour_combo.bind("<<ComboboxSelected>>", self._on_contour_changed)
+        # Tooltip: Contour shapes explanation
+        ToolTip(self._contour_combo,
+            "📐 PLATE SHAPE (Contour Type)\n\n"
+            "PHI_ROUNDED: Default. Rounded corners using φ ratio\n"
+            "RECTANGLE: Sharp corners. Test CNC tolerance.\n"
+            "GOLDEN_RECT: Width/Height = φ (1.618...)\n"
+            "ELLIPSE: Smooth oval. Even frequency distribution.\n"
+            "OVOID: Egg shape. Asymmetric modes.\n"
+            "VESICA_PISCIS: Sacred geometry. Acoustic Black Hole.\n"
+            "SUPERELLIPSE: Squircle. Best CNC compromise.\n"
+            "ORGANIC: Guitar-like Fourier blob.\n"
+            "ERGONOMIC: Body-conforming for spine therapy.\n"
+            "FREEFORM: Control points evolve freely.\n"
+            "AUTO: Let evolution choose best shape.\n\n"
+            "💡 Start with RECTANGLE to test, then PHI_ROUNDED")
         
         # Contour description
         self._contour_info = ttk.Label(
@@ -402,6 +529,31 @@ class PlateDesignerTab(ttk.Frame):
         )
         self._spring_info.grid(row=10, column=1, columnspan=2, padx=5, pady=1, sticky='w')
         
+        # === FORCE ALL GENERATIONS (disable early stopping) ===
+        # Row 11: Checkbox to run ALL generations without premature convergence
+        self._force_all_gens_var = tk.BooleanVar(value=True)  # Default ON: run all generations
+        self._force_all_gens_check = ttk.Checkbutton(
+            self._config_frame, text="🔒 Force All Generations:",
+            variable=self._force_all_gens_var
+        )
+        self._force_all_gens_check.grid(row=11, column=0, padx=5, pady=3, sticky='e')
+        
+        self._force_all_gens_info = ttk.Label(
+            self._config_frame, 
+            text="Disable early stopping (run ALL gens)",
+            font=("SF Pro", 7), foreground="gray"
+        )
+        self._force_all_gens_info.grid(row=11, column=1, columnspan=2, padx=5, pady=3, sticky='w')
+        # Tooltip
+        ToolTip(self._force_all_gens_check,
+            "🔒 FORCE ALL GENERATIONS\n\n"
+            "When ON: Evolution runs for EXACTLY the\n"
+            "number of generations you specified.\n"
+            "No early stopping, no convergence detection.\n\n"
+            "When OFF: Evolution may stop early if\n"
+            "fitness stagnates (>30 gens no improvement).\n\n"
+            "💡 Keep ON for thorough exploration!")
+        
         # --- Control Buttons ---
         self._control_frame = ttk.Frame(self._top_frame, style="TFrame")
         
@@ -430,6 +582,31 @@ class PlateDesignerTab(ttk.Frame):
             width=700,
             height=380
         )
+        
+        # === EVOLUTION LOG PANEL (alongside canvas) ===
+        self._log_frame = self._create_card_frame(self._scrollable_frame, "📜 Evolution Log")
+        
+        # Log text widget with scrollbar
+        self._log_text = tk.Text(
+            self._log_frame,
+            width=45, height=15,
+            bg=STYLE.BG_DARK, fg="#C0C0C0",
+            font=("SF Mono", 9),
+            wrap='word', state='disabled',
+            highlightthickness=0, borderwidth=0
+        )
+        self._log_scrollbar = ttk.Scrollbar(
+            self._log_frame, orient='vertical',
+            command=self._log_text.yview
+        )
+        self._log_text.configure(yscrollcommand=self._log_scrollbar.set)
+        
+        # Configure log tags for colored output
+        self._log_text.tag_configure("gen", foreground=STYLE.GOLD, font=("SF Mono", 9, "bold"))
+        self._log_text.tag_configure("best", foreground="#4ECDC4")
+        self._log_text.tag_configure("cutout", foreground="#FF6B6B")
+        self._log_text.tag_configure("memory", foreground="#9B59B6")
+        self._log_text.tag_configure("info", foreground="#888888")
         
         # === BOTTOM BAR: Status & Charts ===
         self._bottom_frame = ttk.Frame(self._scrollable_frame, style="TFrame")
@@ -553,8 +730,13 @@ class PlateDesignerTab(ttk.Frame):
         self._export_btn.pack(side='left', padx=3, pady=3)
         
         # Canvas frame
-        self._canvas_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        self._canvas_frame.pack(fill='both', expand=True, padx=10, pady=5, side='left')
         self._evolution_canvas.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Log frame (right of canvas)
+        self._log_frame.pack(fill='y', padx=5, pady=5, side='right')
+        self._log_scrollbar.pack(side='right', fill='y')
+        self._log_text.pack(side='left', fill='both', expand=True, padx=5, pady=5)
         
         # Bottom frame
         self._bottom_frame.pack(fill='x', padx=10, pady=5)
@@ -712,7 +894,9 @@ class PlateDesignerTab(ttk.Frame):
                 spring_count=self._spring_count_var.get(),
                 spring_stiffness_kn_m=self._spring_stiffness_var.get(),
                 spring_damping_ratio=self._spring_damping_var.get(),
-                spring_clearance_mm=self._spring_clearance_var.get()
+                spring_clearance_mm=self._spring_clearance_var.get(),
+                # Early stopping control
+                force_all_generations=self._force_all_gens_var.get()
             )
         except tk.TclError:
             pass
@@ -757,8 +941,22 @@ class PlateDesignerTab(ttk.Frame):
         self._on_config_changed()
         self._on_person_changed()
         
-        # Clear chart
+        # Clear chart and log
         self._fitness_chart.clear()
+        self._clear_log()
+        
+        # Log evolution start info
+        config = self._viewmodel.state
+        self._log_evolution("🚀 EVOLUTION STARTED", "gen")
+        self._log_evolution(f"  Population: {config.population_size}", "info")
+        self._log_evolution(f"  Generations: {config.max_generations}", "info")
+        self._log_evolution(f"  Mutation: {config.mutation_rate:.1%}", "info")
+        self._log_evolution(f"  Cutouts: {config.max_cutouts}", "info")
+        self._log_evolution(f"  Grooves: {config.max_grooves}", "info")
+        self._log_evolution(f"  Contour: {config.contour_type}", "info")
+        if config.use_pipeline:
+            self._log_evolution("  🧠 Pipeline: RDNN+LTM memory active", "memory")
+        self._log_evolution("", "info")
         
         # Start
         self._viewmodel.start_evolution()
@@ -780,6 +978,7 @@ class PlateDesignerTab(ttk.Frame):
         """Reset state."""
         self._viewmodel.reset()
         self._fitness_chart.clear()
+        self._clear_log()  # Clear evolution log
         
         self._start_btn.config(state="normal")
         self._stop_btn.config(state="disabled")
@@ -977,12 +1176,67 @@ class PlateDesignerTab(ttk.Frame):
         # Schedule UI update on main thread
         self.after(0, lambda: self._update_from_state(state))
     
+    def _log_evolution(self, text: str, tag: str = "info"):
+        """Append text to evolution log with specified tag/color."""
+        self._log_text.configure(state='normal')
+        self._log_text.insert('end', text + "\n", tag)
+        self._log_text.see('end')  # Auto-scroll
+        self._log_text.configure(state='disabled')
+    
+    def _clear_log(self):
+        """Clear the evolution log."""
+        self._log_text.configure(state='normal')
+        self._log_text.delete('1.0', 'end')
+        self._log_text.configure(state='disabled')
+        self._last_logged_gen = 0
+    
+    def _log_generation_info(self, state: PlateDesignerState):
+        """Log detailed info about current generation."""
+        gen = state.generation
+        
+        # Generation header
+        self._log_evolution(f"━━━ Generation {gen} ━━━", "gen")
+        
+        # Best fitness
+        if state.best_fitness:
+            f = state.best_fitness
+            self._log_evolution(
+                f"  Best fitness: {f.total_fitness:.4f}", "best"
+            )
+            self._log_evolution(
+                f"  • Flatness: {f.flatness_score*100:.0f}%  "
+                f"Spine: {f.spine_coupling_score*100:.0f}%", "info"
+            )
+        
+        # Cutouts info from genome
+        if state.best_genome:
+            g = state.best_genome
+            n_cutouts = len(g.cutouts) if hasattr(g, 'cutouts') and g.cutouts else 0
+            n_grooves = len(g.grooves) if hasattr(g, 'grooves') and g.grooves else 0
+            if n_cutouts > 0:
+                self._log_evolution(
+                    f"  ✂️ Cutouts: {n_cutouts} (VirtualCNC ready)", "cutout"
+                )
+            if n_grooves > 0:
+                self._log_evolution(
+                    f"  〰️ Grooves: {n_grooves}", "info"
+                )
+            
+            # Contour type
+            contour = g.contour_type.name if hasattr(g, 'contour_type') else "?"
+            self._log_evolution(f"  📐 Shape: {contour}", "info")
+        
+        # Memory info (if pipeline active)
+        if hasattr(state, 'rdnn_active') and state.rdnn_active:
+            self._log_evolution(f"  🧠 RDNN memory active", "memory")
+    
     def _update_from_state(self, state: PlateDesignerState):
         """Update all UI from state."""
         
         # Check for errors
         if state.error_message:
             self._status_label.config(text=f"❌ Error: {state.error_message[:50]}...")
+            self._log_evolution(f"❌ ERROR: {state.error_message}", "cutout")
             print(f"[UI Error] {state.error_message}")  # Debug
             return
         
@@ -995,6 +1249,17 @@ class PlateDesignerTab(ttk.Frame):
         self._best_label.config(text=f"Best: {state.best_fitness_value:.4f}")
         self._time_label.config(text=f"Time: {state.elapsed_time:.1f}s")
         self._plate_label.config(text=f"Plate: {state.plate_info_text}")
+        
+        # Log generation progress (only for new generations)
+        if hasattr(self, '_last_logged_gen'):
+            if state.generation > self._last_logged_gen:
+                self._log_generation_info(state)
+                self._last_logged_gen = state.generation
+        else:
+            self._last_logged_gen = 0
+            if state.generation > 0:
+                self._log_generation_info(state)
+                self._last_logged_gen = state.generation
         
         # Fitness scores
         if state.best_fitness:

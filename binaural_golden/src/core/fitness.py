@@ -245,6 +245,11 @@ class FitnessResult:
     # This is the KEY metric for multi-objective optimization
     ear_uniformity_score: float = 0.0  # L/R balance [0-1], 1=perfect symmetry
     
+    # JAB (Jitter-Aware Binaural) Phase Coherence - NEW 2025-01-04
+    # Evaluates DSP phase alignment between same-side exciters (CH1↔CH3, CH2↔CH4)
+    # Critical for constructive interference at ears
+    jab_coherence_score: float = 0.0  # Phase coherence [0-1], 1=perfect alignment
+    
     # SYMMETRY SCORE - Explicit pressure toward bilateral symmetry
     # GA doesn't naturally converge to symmetry without fitness gradient!
     # Reference: GA converges to local optima (Wikipedia Genetic Algorithm)
@@ -458,6 +463,9 @@ class FitnessEvaluator:
         # 5b. EAR L/R UNIFORMITY - Critical metric for binaural balance!
         result.ear_uniformity_score = self._score_ear_uniformity(head_response)
         
+        # 5c. JAB Phase Coherence - DSP alignment between same-side exciters
+        result.jab_coherence_score = self._score_jab_coherence(genome)
+        
         # Flatness combinato con zone_weights (70% spine, 30% head)
         result.flatness_score = (
             self.zone_weights.spine * result.spine_flatness_score +
@@ -492,6 +500,7 @@ class FitnessEvaluator:
         # Score totale pesato
         # CRITICAL: Include ear_uniformity with HIGH weight for L/R balance!
         # NEW: Include symmetry_score for explicit symmetry pressure
+        # NEW: Include jab_coherence_score for DSP phase alignment (2025-01-04)
         result.total_fitness = (
             self.objectives.flatness * result.flatness_score +
             self.objectives.spine_coupling * result.spine_coupling_score +
@@ -501,6 +510,7 @@ class FitnessEvaluator:
             0.05 * result.groove_tuning_score +    # Bonus for effective grooves
             0.08 * result.cutout_tuning_score +    # Bonus for effective cutouts (ABH/lutherie)
             0.4 * result.ear_uniformity_score +    # HIGH weight for L/R balance!
+            0.20 * result.jab_coherence_score +    # JAB phase coherence for binaural!
             0.25 * result.symmetry_score           # SYMMETRY PRESSURE (15-25% of total)
         )
         
@@ -1533,6 +1543,42 @@ class FitnessEvaluator:
         dsp_score = (gain_score + phase_score + delay_score) / 3
         
         return 0.70 * pos_score + 0.30 * dsp_score
+    
+    def _score_jab_coherence(self, genome: PlateGenome) -> float:
+        """
+        Score JAB (Jitter-Aware Binaural) phase coherence across channels.
+        
+        WHY THIS MATTERS:
+        JAB4 uses 4 exciters: CH1↔CH3 (Left), CH2↔CH4 (Right).
+        For proper binaural imaging:
+        - Same-side channels must be phase-coherent
+        - L/R phase can differ for stereo image or binaural beats
+        
+        This uses JABCoherenceScorer from scorers module.
+        
+        Returns:
+            Score [0, 1] where 1.0 = perfect JAB coherence
+        """
+        try:
+            from .scorers import JABCoherenceScorer
+            
+            # Create scorer with binaural mode
+            scorer = JABCoherenceScorer(binaural_mode="coherent")
+            
+            # Score the genome
+            result = scorer.score(genome, {})
+            
+            return float(result.score)
+        except ImportError:
+            # JABCoherenceScorer not available
+            return 0.5
+        except Exception as e:
+            # Log but don't fail fitness evaluation
+            import logging
+            logging.getLogger(__name__).warning(
+                f"JAB coherence scoring failed: {e}"
+            )
+            return 0.5
     
     def _score_flatness(
         self,
