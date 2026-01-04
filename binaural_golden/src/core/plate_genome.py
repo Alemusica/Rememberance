@@ -2518,8 +2518,13 @@ class PlateGenome:
         return genome
     
     def __repr__(self) -> str:
+        # Handle case where contour_type might not be a ContourType enum
+        if hasattr(self.contour_type, 'value'):
+            contour_str = self.contour_type.value
+        else:
+            contour_str = str(self.contour_type)
         return (
-            f"PlateGenome({self.contour_type.value}, "
+            f"PlateGenome({contour_str}, "
             f"{self.length:.2f}×{self.width:.2f}×{self.thickness_base*1000:.1f}mm, "
             f"cuts={len(self.cutouts)}, fitness={self.fitness:.3f})"
         )

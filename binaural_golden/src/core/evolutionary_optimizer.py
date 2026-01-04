@@ -558,7 +558,11 @@ class EvolutionaryOptimizer:
             # Get best genome info
             best_n_cutouts = len(self._best_genome.cutouts) if self._best_genome.cutouts else 0
             best_n_grooves = len(self._best_genome.grooves) if self._best_genome.grooves else 0
-            best_contour = self._best_genome.contour_type.name
+            # Handle case where contour_type might be bool instead of enum
+            if hasattr(self._best_genome.contour_type, 'name'):
+                best_contour = self._best_genome.contour_type.name
+            else:
+                best_contour = str(self._best_genome.contour_type)
             
             log_generation_summary(
                 generation=self._generation,
@@ -761,7 +765,11 @@ class EvolutionaryOptimizer:
         # Diversità contour types
         contour_counts = {}
         for g in self._population:
-            ct = g.contour_type.value
+            # Handle case where contour_type might be bool instead of enum
+            if hasattr(g.contour_type, 'value'):
+                ct = g.contour_type.value
+            else:
+                ct = str(g.contour_type)
             contour_counts[ct] = contour_counts.get(ct, 0) + 1
         
         n = len(self._population)
