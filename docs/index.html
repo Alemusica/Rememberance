@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Golden Studio | Evolutionary Vibroacoustic Optimization</title>
+    <meta name="description" content="Physics-informed evolutionary optimization for vibroacoustic therapy plates. NSGA-II, neural memory, curriculum learning.">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            /* Golden Ratio derived values */
+            --phi: 1.618033988749895;
+            --gold: #D4AF37;
+            --gold-light: #F4E4BA;
+            --gold-dark: #996515;
+            --black: #0A0A0A;
+            --dark: #141414;
+            --darker: #1A1A1A;
+            --gray: #2A2A2A;
+            --text: #E8E8E8;
+            --text-dim: #888888;
+            
+            /* Spacing based on Fibonacci */
+            --space-xs: 3px;
+            --space-sm: 5px;
+            --space-md: 8px;
+            --space-lg: 13px;
+            --space-xl: 21px;
+            --space-2xl: 34px;
+            --space-3xl: 55px;
+            --space-4xl: 89px;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        body {
+            font-family: 'Cormorant Garamond', Georgia, serif;
+            background: var(--black);
+            color: var(--text);
+            line-height: 1.618;
+            overflow-x: hidden;
+        }
+        
+        /* Animated Background */
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.03;
+            background-image: 
+                radial-gradient(circle at 25% 25%, var(--gold) 1px, transparent 1px),
+                radial-gradient(circle at 75% 75%, var(--gold) 1px, transparent 1px);
+            background-size: 89px 89px;
+            animation: drift 60s linear infinite;
+        }
+        
+        @keyframes drift {
+            from { transform: translate(0, 0); }
+            to { transform: translate(89px, 89px); }
+        }
+        
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            padding: var(--space-xl) var(--space-3xl);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+            background: linear-gradient(to bottom, var(--black), transparent);
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--gold);
+            letter-spacing: 0.1em;
+            text-decoration: none;
+        }
+        
+        .logo span {
+            color: var(--text);
+            font-weight: 400;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: var(--space-2xl);
+            list-style: none;
+        }
+        
+        .nav-links a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.95rem;
+            transition: color 0.3s ease;
+            letter-spacing: 0.05em;
+        }
+        
+        .nav-links a:hover {
+            color: var(--gold);
+        }
+        
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: var(--space-4xl);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-md);
+            padding: var(--space-md) var(--space-lg);
+            background: var(--gray);
+            border-radius: 100px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--gold);
+            margin-bottom: var(--space-2xl);
+            animation: fadeInUp 0.8s ease-out;
+        }
+        
+        .hero-badge::before {
+            content: '✦';
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .hero h1 {
+            font-size: clamp(3rem, 8vw, 7rem);
+            font-weight: 400;
+            line-height: 1.1;
+            margin-bottom: var(--space-xl);
+            animation: fadeInUp 0.8s ease-out 0.1s backwards;
+        }
+        
+        .hero h1 .gold {
+            color: var(--gold);
+            font-weight: 600;
+        }
+        
+        .hero-subtitle {
+            font-size: clamp(1.1rem, 2vw, 1.4rem);
+            color: var(--text-dim);
+            max-width: 700px;
+            margin-bottom: var(--space-3xl);
+            animation: fadeInUp 0.8s ease-out 0.2s backwards;
+        }
+        
+        .hero-cta {
+            display: flex;
+            gap: var(--space-xl);
+            animation: fadeInUp 0.8s ease-out 0.3s backwards;
+        }
+        
+        .btn {
+            padding: var(--space-lg) var(--space-2xl);
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            letter-spacing: 0.05em;
+        }
+        
+        .btn-primary {
+            background: var(--gold);
+            color: var(--black);
+        }
+        
+        .btn-primary:hover {
+            background: var(--gold-light);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(212, 175, 55, 0.3);
+        }
+        
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--gray);
+        }
+        
+        .btn-secondary:hover {
+            border-color: var(--gold);
+            color: var(--gold);
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* Golden Spiral Decoration */
+        .spiral {
+            position: absolute;
+            bottom: var(--space-3xl);
+            opacity: 0.1;
+            animation: rotate 120s linear infinite;
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Section Styles */
+        section {
+            padding: var(--space-4xl) var(--space-3xl);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .section-title {
+            font-size: clamp(2rem, 4vw, 3.5rem);
+            font-weight: 400;
+            margin-bottom: var(--space-xl);
+            text-align: center;
+        }
+        
+        .section-title .gold {
+            color: var(--gold);
+        }
+        
+        .section-subtitle {
+            color: var(--text-dim);
+            text-align: center;
+            max-width: 600px;
+            margin: 0 auto var(--space-3xl);
+            font-size: 1.1rem;
+        }
+        
+        /* Features Grid */
+        .features {
+            background: var(--dark);
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: var(--space-2xl);
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .feature-card {
+            background: var(--darker);
+            border: 1px solid var(--gray);
+            border-radius: 8px;
+            padding: var(--space-2xl);
+            transition: all 0.3s ease;
+        }
+        
+        .feature-card:hover {
+            border-color: var(--gold);
+            transform: translateY(-5px);
+        }
+        
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: var(--space-lg);
+        }
+        
+        .feature-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: var(--space-md);
+            color: var(--gold-light);
+        }
+        
+        .feature-card p {
+            color: var(--text-dim);
+            font-size: 1rem;
+        }
+        
+        /* Architecture Section */
+        .architecture {
+            background: var(--black);
+        }
+        
+        .arch-container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--dark);
+            border: 1px solid var(--gray);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .arch-header {
+            display: flex;
+            gap: var(--space-md);
+            padding: var(--space-lg);
+            background: var(--darker);
+            border-bottom: 1px solid var(--gray);
+        }
+        
+        .arch-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .arch-dot.red { background: #FF5F56; }
+        .arch-dot.yellow { background: #FFBD2E; }
+        .arch-dot.green { background: #27CA40; }
+        
+        .arch-code {
+            padding: var(--space-2xl);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.8;
+            color: var(--text-dim);
+            overflow-x: auto;
+        }
+        
+        .arch-code .folder { color: var(--gold); }
+        .arch-code .file { color: var(--text); }
+        .arch-code .comment { color: #6A9955; }
+        
+        /* Research Section */
+        .research {
+            background: var(--dark);
+        }
+        
+        .research-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: var(--space-xl);
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        .research-card {
+            text-align: center;
+            padding: var(--space-2xl);
+        }
+        
+        .research-number {
+            font-size: 3.5rem;
+            font-weight: 600;
+            color: var(--gold);
+            line-height: 1;
+        }
+        
+        .research-label {
+            color: var(--text-dim);
+            font-size: 1rem;
+            margin-top: var(--space-md);
+        }
+        
+        /* CTA Section */
+        .cta {
+            background: linear-gradient(135deg, var(--dark) 0%, var(--black) 100%);
+            text-align: center;
+        }
+        
+        .cta-box {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: var(--space-4xl);
+            border: 1px solid var(--gray);
+            border-radius: 12px;
+            background: var(--darker);
+        }
+        
+        .cta h2 {
+            font-size: 2.5rem;
+            margin-bottom: var(--space-lg);
+        }
+        
+        .cta p {
+            color: var(--text-dim);
+            margin-bottom: var(--space-2xl);
+            font-size: 1.1rem;
+        }
+        
+        /* Footer */
+        footer {
+            padding: var(--space-3xl);
+            text-align: center;
+            border-top: 1px solid var(--gray);
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+        
+        footer .phi {
+            color: var(--gold);
+            font-size: 1.5rem;
+            display: block;
+            margin-bottom: var(--space-lg);
+        }
+        
+        footer a {
+            color: var(--gold);
+            text-decoration: none;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            nav {
+                padding: var(--space-lg);
+            }
+            
+            .nav-links {
+                display: none;
+            }
+            
+            .hero {
+                padding: var(--space-3xl) var(--space-xl);
+            }
+            
+            section {
+                padding: var(--space-3xl) var(--space-xl);
+            }
+            
+            .hero-cta {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+    
+    <nav>
+        <a href="#" class="logo">GOLDEN<span>STUDIO</span></a>
+        <ul class="nav-links">
+            <li><a href="#features">Features</a></li>
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#research">Research</a></li>
+            <li><a href="https://github.com/Alemusica/Rememberance">GitHub</a></li>
+        </ul>
+    </nav>
+    
+    <section class="hero">
+        <div class="hero-badge">Open Source • MIT License</div>
+        <h1>Evolve the <span class="gold">Perfect</span><br>Vibroacoustic Plate</h1>
+        <p class="hero-subtitle">
+            Physics-informed evolutionary optimization using NSGA-II, 
+            neural memory, and curriculum learning. Where the human body 
+            becomes the string to tune.
+        </p>
+        <div class="hero-cta">
+            <a href="https://github.com/Alemusica/Rememberance" class="btn btn-primary">View on GitHub</a>
+            <a href="#features" class="btn btn-secondary">Learn More</a>
+        </div>
+        
+        <svg class="spiral" width="400" height="400" viewBox="0 0 400 400">
+            <path d="M200,200 Q200,100 300,100 Q400,100 400,200 Q400,350 200,350 Q50,350 50,200 Q50,100 150,50" 
+                  fill="none" stroke="var(--gold)" stroke-width="1"/>
+        </svg>
+    </section>
+    
+    <section class="features" id="features">
+        <h2 class="section-title">Key <span class="gold">Features</span></h2>
+        <p class="section-subtitle">
+            A novel hybrid framework combining evolutionary algorithms with physics-informed fitness evaluation
+        </p>
+        
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🧬</div>
+                <h3>Curriculum Learning</h3>
+                <p>GenePhase stages (SEED→SPROUT→GROW→BLOOM) for gradual complexification, inspired by NEAT and Bengio's curriculum learning.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🧠</div>
+                <h3>Neural Memory (RDNN)</h3>
+                <p>LSTM/GRU maintains hidden state across optimization runs. Learn from previous searches, predict fitness trajectories.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📊</div>
+                <h3>Multi-Objective NSGA-II</h3>
+                <p>Pareto-optimal trade-offs between spine coupling, ear uniformity, structural safety, and manufacturability.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🎻</div>
+                <h3>Physics-Informed</h3>
+                <p>FEM modal analysis via JAX autodiff. ABH (Acoustic Black Hole) detection. Zone-specific frequency response.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🔧</div>
+                <h3>CNC-Ready Export</h3>
+                <p>Direct STL and G-code generation. Topology-optimized cutouts with Bézier/B-spline contours.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📚</div>
+                <h3>Research-Backed</h3>
+                <p>Built on 70+ distilled papers: lutherie, body resonance, vibroacoustic therapy, plate physics.</p>
+            </div>
+        </div>
+    </section>
+    
+    <section class="architecture" id="architecture">
+        <h2 class="section-title">Clean <span class="gold">Architecture</span></h2>
+        <p class="section-subtitle">
+            Domain-agnostic framework with pluggable strategies and modular scorers
+        </p>
+        
+        <div class="arch-container">
+            <div class="arch-header">
+                <div class="arch-dot red"></div>
+                <div class="arch-dot yellow"></div>
+                <div class="arch-dot green"></div>
+            </div>
+            <pre class="arch-code">
+<span class="folder">src/core/</span>
+├── <span class="folder">OPTIMIZATION LAYER</span>
+│   ├── <span class="file">unified_optimizer.py</span>    <span class="comment"># Strategy pattern</span>
+│   ├── <span class="file">agnostic_evolution.py</span>   <span class="comment"># Domain-agnostic interfaces</span>
+│   ├── <span class="file">evolution_pipeline.py</span>   <span class="comment"># Pokayoke → Physics → RDNN → LTM</span>
+│   └── <span class="file">exciter_gene.py</span>         <span class="comment"># GenePhase curriculum</span>
+│
+├── <span class="folder">PHYSICS LAYER</span>
+│   ├── <span class="file">plate_physics.py</span>        <span class="comment"># Analytical Kirchhoff</span>
+│   ├── <span class="file">jax_plate_fem.py</span>        <span class="comment"># JAX-accelerated FEM</span>
+│   └── <span class="file">materials.py</span>            <span class="comment"># Spruce, Baltic birch...</span>
+│
+├── <span class="folder">FITNESS LAYER</span>
+│   ├── <span class="file">fitness.py</span>              <span class="comment"># Multi-objective evaluator</span>
+│   ├── <span class="file">scorers/</span>                <span class="comment"># Modular scoring plugins</span>
+│   └── <span class="file">structural_analysis.py</span>  <span class="comment"># ABH, peninsula detection</span>
+│
+├── <span class="folder">MEMORY LAYER</span>
+│   ├── <span class="file">evolution_memory.py</span>     <span class="comment"># STM + LTM</span>
+│   └── <span class="file">rdnn_memory.py</span>          <span class="comment"># LSTM/GRU trajectory</span>
+│
+└── <span class="folder">EXPORT LAYER</span>
+    ├── <span class="file">stl_export.py</span>           <span class="comment"># 3D mesh</span>
+    └── <span class="file">virtual_cnc.py</span>          <span class="comment"># G-code generation</span>
+            </pre>
+        </div>
+    </section>
+    
+    <section class="research" id="research">
+        <h2 class="section-title">Research <span class="gold">Foundation</span></h2>
+        <p class="section-subtitle">
+            Distilled knowledge from interdisciplinary academic literature
+        </p>
+        
+        <div class="research-grid">
+            <div class="research-card">
+                <div class="research-number">70+</div>
+                <div class="research-label">Research Papers</div>
+            </div>
+            <div class="research-card">
+                <div class="research-number">5</div>
+                <div class="research-label">Research Domains</div>
+            </div>
+            <div class="research-card">
+                <div class="research-number">φ</div>
+                <div class="research-label">Golden Ratio Core</div>
+            </div>
+            <div class="research-card">
+                <div class="research-number">∞</div>
+                <div class="research-label">Pareto Solutions</div>
+            </div>
+        </div>
+    </section>
+    
+    <section class="cta">
+        <div class="cta-box">
+            <h2>Ready to <span class="gold">Evolve</span>?</h2>
+            <p>
+                Clone the repository, run the optimizer, and design your own 
+                vibroacoustic therapy plate optimized for the human body.
+            </p>
+            <a href="https://github.com/Alemusica/Rememberance" class="btn btn-primary">
+                Get Started →
+            </a>
+        </div>
+    </section>
+    
+    <footer>
+        <div class="phi">✦ φ ✦</div>
+        <p>
+            Created by <a href="https://github.com/Alemusica">Alessio Ivoy Cazzaniga</a><br>
+            MIT License • 2025
+        </p>
+    </footer>
+</body>
+</html>
