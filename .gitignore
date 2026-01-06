@@ -102,3 +102,15 @@ temp/
 secrets.yaml
 *.key
 *.pem
+
+# ─── Project-specific exclusions ──────────────────────────────────────────────
+# SurrealDB databases (local knowledge base)
+binaural_golden/docs/research/surrealdb/
+docs/research/surrealdb/
+*.sst
+*.blob
+*.clog
+*.manifest
+
+# Research database
+research.db/
