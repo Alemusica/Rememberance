@@ -1,1 +1,0 @@
-../Resources/spectral_sound.py
