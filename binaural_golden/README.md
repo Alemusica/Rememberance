@@ -1,384 +1,239 @@
-# Golden Ratio Binaural Beat Generator
-# Divine Coherence Phase Cancellation Annealing
+# Golden Studio 🌀
 
-## 🌀 Overview
+> **Evolutionary optimization framework for vibroacoustic therapy plates using physics-informed multi-objective algorithms**
 
-A high-precision binaural beat generator based on **golden ratio mathematics** (φ = 1.618033988749895...). 
-
-This software generates audio that guides the listener through mathematically perfect golden transitions toward **phase cancellation** (pure silence).
-
-### Key Features
-
-- **Golden Ratio Frequencies**: All frequencies in φ relationships
-- **Fibonacci/Prime Sequences**: Beat patterns follow sacred number sequences
-- **Non-Linear Transitions**: Golden spiral interpolation (NOT linear)
-- **Phase Annealing**: Journey toward perfect phase cancellation
-- **Maximum Precision**: 96kHz, 24-bit audio with 64-bit float internal processing
-- **Optional Rust Core**: For absolute maximum precision
+[![License: MIT](https://img.shields.io/badge/License-MIT-gold.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![NSGA-II](https://img.shields.io/badge/optimizer-NSGA--II-green.svg)](https://pymoo.org/)
 
 ---
 
-## 📊 Development Status
+## 🎯 What is this?
 
-> **Last Updated**: December 6, 2025
+Golden Studio is a **novel hybrid evolutionary framework** that combines:
 
-### ✅ Completed & Working Features
+- **Multi-objective NSGA-II** for Pareto optimization
+- **Curriculum learning** via staged gene activation (SEED→SPROUT→GROW→BLOOM)
+- **Neural memory (RDNN)** for trajectory prediction across optimization runs
+- **Long-term knowledge distillation (LTM)** for cross-run learning
+- **Physics-informed fitness** based on FEM modal analysis
 
-#### 🎵 Golden Sound Studio (Main Application)
-- **Tab 1: Binaural Beats** - Phase angle control with sacred geometry presets ✅
-- **Tab 2: Spectral Sound** - Play atomic elements (H, He, O, Na, etc.) ✅
-- **Tab 3: Molecular Sound** - Play molecules (H₂O, CO₂, CH₄) ✅
-- **Tab 4: Harmonic Tree** - Fibonacci harmonics with visualization ✅
-- **Tab 5: Vibroacoustic** - Soundboard panning (basic sweep mode) ✅
+The goal: **optimize DML (Distributed Mode Loudspeaker) plates** for vibroacoustic therapy, where the human body is the "string to tune".
 
-#### 🌳 Harmonic Tree Features (STABLE)
-- **Fibonacci ratios**: 2f, 3f, 5f, 8f, 13f harmonics
-- **Golden Angle phases**: Each harmonic rotated by 137.5°
-- **Amplitude decay**: φ⁻ⁿ natural decay pattern
-- **Therapeutic Growth Mode**: Harmonics emerge progressively (10s to 1hr)
-- **Breathe Mode**: Grow → sustain → shrink cycles
-- **3D Isometric visualization** with sound→light color mapping
+![Architecture Overview](docs/architecture.png)
 
-#### 🪵 Vibroacoustic Soundboard (BASIC WORKING)
-Physical panning for therapy soundboard with 2 exciters:
-- **Head-Feet axis**: Exciter at head (0mm) and feet (2000mm)
-- **Spruce velocity**: 5500 m/s along fiber (Brico standard board)
-- **ITD (Interaural Time Difference)**: Max 0.36ms delay for localization
-- **ILD (Interaural Level Difference)**: Equal-power panning + soft attenuation
-- **Spring isolation**: 5× springs (4 corners + 1 center) for floor decoupling
-- **Auto-sweep mode**: Sine/linear/golden wave body massage
-- **Real-time visualization**: Top-down board view with body silhouette
+---
 
-#### 🌲 Phase Rotation Modes
-Two modes for phase evolution during growth:
-1. **Fixed Trunk** (default): Fundamental stays at 0°, harmonics rotate
-2. **Whole Tree**: All phases rotate including fundamental
+## 🏗️ Architecture
 
-See `docs/PHASE_ROTATION_MODES.md` for full documentation.
-
-#### 🎯 Golden-Fifth Gap Angle
-The "missing angle" between musical and golden perfection:
 ```
-φ (Golden Ratio) = 1.618034
-P5 (Perfect Fifth) = 1.5
-Gap Angle = (φ - 1.5) / φ × 360° = 26.26°
+src/core/
+├── OPTIMIZATION LAYER
+│   ├── unified_optimizer.py    # Strategy pattern (GENETIC/NSGA2/SIMP/HYBRID)
+│   ├── agnostic_evolution.py   # Domain-agnostic interfaces
+│   ├── evolution_pipeline.py   # Full pipeline: Pokayoke → Physics → RDNN → LTM
+│   └── exciter_gene.py         # GenePhase curriculum learning
+│
+├── PHYSICS LAYER
+│   ├── plate_physics.py        # Analytical modal analysis
+│   ├── jax_plate_fem.py        # JAX-accelerated FEM (autodiff)
+│   └── materials.py            # Spruce, Baltic birch, MDF...
+│
+├── FITNESS LAYER
+│   ├── fitness.py              # Multi-objective evaluator
+│   ├── scorers/                # Modular scoring (ear_uniformity, spine_coupling...)
+│   └── structural_analysis.py  # ABH detection, peninsula analysis
+│
+├── MEMORY LAYER
+│   ├── evolution_memory.py     # Short-term (ring buffer) + Long-term
+│   └── rdnn_memory.py          # LSTM/GRU for trajectory prediction
+│
+└── EXPORT LAYER
+    ├── stl_export.py           # 3D STL for CNC
+    └── virtual_cnc.py          # G-code generation
 ```
-Added to SACRED_ANGLES in golden_constants.py
 
-#### 📐 Sacred Angles Library
-- Golden Angle (137.5°)
-- **φ-Fifth Gap (26.26°)**
-- Fine Structure (137.04°)
-- DNA Helix (34.3°)
-- Pentagon (108°)
-- Pyramid Giza (51.84°)
-- Water molecule (104.5°)
-- Methane tetrahedral (109.5°)
-- And more...
+---
 
-#### 🔊 Audio Engine
-- Real-time parameter updates (no glitches)
-- Multi-device support (DDJ-FLX4, BlackHole, etc.)
-- Callback-based continuous playback
-- Stereo panning with golden angle positioning
+## 🔬 Research Foundation
 
-### ⚠️ Known Issues
+Built on **70+ distilled research papers** covering:
 
-1. **Audio Clicks/Pops**: Some clicking artifacts occur during rapid parameter changes
-   - Affects: Vibroacoustic pan position changes, potentially Harmonic Tree growth
-   - Root cause: Needs investigation - may be related to buffer boundaries or sudden amplitude changes
-   - Workaround: Use slower sweep modes, avoid rapid manual pan changes
+| Domain | Papers | Key References |
+|--------|--------|----------------|
+| Multi-exciter DML | 8 | Lu 2012, Bai & Liu 2004 |
+| Acoustic Black Holes | 7 | Krylov 2014, Deng 2019 |
+| Lutherie | 12 | Schleske 2002, Woodhouse 2014 |
+| Human Body Resonance | 8 | Griffin 1990 (spine 10-12Hz, chest 50-60Hz) |
+| Vibroacoustic Therapy | 7 | Skille 1989 (30-120Hz), Boyd-Brewer 2003 |
 
-### 🚧 In Progress / Needs Work
+Full bibliography: [`docs/research/vibroacoustic_references.bib`](docs/research/vibroacoustic_references.bib)
 
-- [ ] **Chakra Convergence Journey** - ATTEMPTED but audio clicking issues prevented completion
-  - Concept: 3-frequency journey (Perfect 4th, Root, Octave) converging at solar plexus
-  - Body positions calculated from mm on 1950mm board
-  - Blocked by: Audio engine needs smoother parameter interpolation
-  
-- [ ] **Wave propagation model**: Account for wood grain velocity variations
-- [ ] **Frequency-dependent propagation**: Higher frequencies attenuate faster
-- [ ] **Click-free audio transitions**: AudioEngine needs per-sample smoothing for pan/amplitude
+---
 
-### 📋 Planned Features
+## ✨ Key Features
 
-- [ ] MIDI control integration
-- [ ] OSC protocol support
-- [ ] Export to VST/AU plugin
-- [ ] Preset sharing/import
-- [ ] Session recording with automation
+### 🧬 Curriculum Learning (GenePhase)
+```python
+class GenePhase(Enum):
+    SEED = 0    # Position-only mutations (exploration)
+    SPROUT = 1  # + diameter mutations
+    GROW = 2    # + exciter count mutations
+    BLOOM = 3   # Full mutation (position + diameter + count + emission)
+```
+Inspired by NEAT (Stanley 2002) and curriculum learning (Bengio 2009).
 
-### 🔧 Technical Notes for Next Developer
+### 🧠 Neural Memory (RDNN)
+```python
+# LSTM/GRU maintains hidden state across optimization runs
+memory = RDNNMemory(architecture=RDNNArchitecture.GRU, hidden_size=64)
+memory.observe(fitness_trajectory, physics_features)
+suggestions = memory.suggest()  # Adaptive mutation rate, search direction
+```
 
-**Audio Click Investigation Needed:**
-The `_generate_spectral_chunk()` method in `AudioEngine` class needs investigation.
-Current implementation has basic smoothing but clicks still occur. Possible causes:
-1. Buffer boundary discontinuities
-2. Normalization causing sudden volume changes
-3. Pan law calculation at extreme positions (pan = -1 or +1)
-4. Thread synchronization issues with parameter updates
+### 📊 Multi-Objective Pareto
+```python
+objectives = ObjectiveVector(
+    spine_flatness=0.85,      # 20-200Hz response at spine
+    ear_lr_uniformity=0.97,   # L/R balance for binaural
+    structural_safety=1.0,    # Deflection < 10mm
+    abh_benefit=0.72,         # Acoustic Black Hole energy focusing
+)
+# NSGA-II finds Pareto-optimal trade-offs
+```
 
-**File Locations:**
-- Main app: `src/golden_studio.py` (~3556 lines)
-- Soundboard panning: `src/soundboard_panning.py`
-- Constants: `src/golden_constants.py`
+### 🎻 Physics-Informed Fitness
+- Modal analysis via analytical Kirchhoff or JAX-accelerated FEM
+- Zone-specific response: spine (tactile 20-200Hz) vs head (audio 50-8kHz)
+- ABH peninsula detection for energy focusing (Krylov 2014)
+
+---
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Alemusica/Golden-Studio.git
+cd Golden-Studio/binaural_golden
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Run the GUI
+
+```bash
+python src/golden_studio.py
+```
+
+### Run Optimization (CLI)
+
+```python
+from src.core.person import Person
+from src.core.unified_optimizer import OptimizationStrategy
+from src.core.plate_unified import create_plate_optimization_system
+
+# Create person model (the "string to tune")
+person = Person(height_m=1.80, weight_kg=75)
+
+# Create optimizer
+optimizer, config = create_plate_optimization_system(
+    person,
+    strategy=OptimizationStrategy.NSGA2,
+    use_memory=True
+)
+
+# Run evolution
+result = optimizer.optimize(config)
+print(f"Best fitness: {result.best_fitness:.4f}")
+print(f"Pareto front size: {len(result.pareto_front)}")
+```
+
+---
+
+## 🧪 Tests
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run physics validation tests
+pytest tests/test_physics_validation.py -v  # 11/11 pass
+
+# Run evolution pipeline tests
+pytest tests/test_evolution_pipeline.py -v
+```
 
 ---
 
 ## 📐 The Mathematics
 
-### Divine Constants
-
+### Golden Ratio Constants
 ```
 φ (Phi)           = 1.618033988749895...  (Golden Ratio)
 φ conjugate       = 0.618033988749895...  (1/φ = φ-1)
-φ²                = 2.618033988749895...  (φ+1)
+Golden angle      = 2π/φ² ≈ 137.5°
 ```
 
-### Golden Spiral Transition Function
+### Zone Frequency Targets
 
-Instead of linear interpolation `f(t) = t`, we use:
+| Zone | Frequency Range | Purpose |
+|------|-----------------|---------|
+| Spine | 20-200 Hz | Tactile vibration therapy |
+| Head/Ears | 50-8000 Hz | Binaural audio reproduction |
+| Chest | 50-60 Hz | Resonance coupling |
 
+### ABH (Acoustic Black Hole) Profile
 ```python
-def golden_spiral_interpolation(t):
-    θ = t × π × φ
-    golden_ease = (1 - cos(θ × φ_conjugate)) / 2
-    golden_sigmoid = 1 / (1 + e^(-4(t-0.5) × φ))
-    return golden_ease × φ_conjugate + golden_sigmoid × (1-φ_conjugate)
+h(x) = h₀ × (x / x_abh)^m   # m ≥ 2 for wave trapping
 ```
 
-This creates smooth, organic transitions following the divine proportion.
+---
 
-### Frequency Relationships
+## 🤝 Contributing
 
-All frequencies are related by powers of φ:
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-```
-Base: 432 Hz (Sacred frequency)
-Beat frequencies: 432/φ³, 432/φ⁴, 432/φ⁵, ...
-                = 101.8, 62.9, 38.9, 24.0, 14.8, 9.2, 5.7, 3.5 Hz
-```
+Areas of interest:
+- [ ] Ray parallelization for distributed evaluation
+- [ ] Quality-Diversity (MAP-Elites) for zone-specific exploration
+- [ ] Additional domain adapters (singing bowls, speaker enclosures)
+- [ ] Web-based UI
 
-### Duration Relationships
+---
 
-Segment durations follow **Fibonacci sequence** (which converges to φ):
+## 📚 Citation
 
-```
-1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, ...
-Ratio: F(n+1)/F(n) → φ as n → ∞
-```
+If you use this work in research, please cite:
 
-### Phase Annealing
-
-The journey to silence through phase cancellation:
-
-```
-Stage 0: Phase = 0°      → Full binaural effect
-Stage 1: Phase = φ° × π  → Beginning cancellation
-...
-Stage N: Phase = π       → Perfect cancellation (silence)
+```bibtex
+@software{golden_studio_2025,
+  author = {Cazzaniga, Alessio Ivoy},
+  title = {Golden Studio: Evolutionary Optimization for Vibroacoustic Plates},
+  year = {2025},
+  url = {https://github.com/Alemusica/Golden-Studio}
+}
 ```
 
-Two identical waves with π phase difference sum to zero: `sin(ωt) + sin(ωt + π) = 0`
-
-## 🎵 Brainwave States
-
-| State | Frequency Range | Effect |
-|-------|-----------------|--------|
-| Delta | 0.5 - 4 Hz | Deep sleep, healing |
-| Theta | 4 - 8 Hz | Meditation, creativity |
-| Alpha | 8 - 13 Hz | Relaxed awareness |
-| Beta | 13 - 30 Hz | Active thinking |
-| Gamma | 30 - 100 Hz | Peak performance |
-
-The generator uses **golden ratio points** within each range for optimal effect.
-
-## 🏗️ Project Structure
-
-```
-binaural_golden/
-├── src/
-│   ├── golden_core.py       # Main Python implementation
-│   ├── advanced_generator.py # Extended features
-│   ├── visualizer.py         # GUI interface
-│   └── rust_core/            # Optional Rust core
-│       ├── Cargo.toml
-│       └── src/
-│           ├── lib.rs
-│           └── python_bindings.rs
-├── requirements.txt
-└── README.md
-```
-
-## 🚀 Installation
-
-### Python Only (Simple)
-
-```bash
-# Clone or download the project
-cd binaural_golden
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run basic generator
-python src/golden_core.py
-
-# Run advanced generator
-python src/advanced_generator.py
-
-# Run GUI visualizer
-python src/visualizer.py
-```
-
-### With Rust Core (Maximum Precision)
-
-```bash
-# Install Rust if needed
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Build Rust library
-cd src/rust_core
-cargo build --release
-
-# Install as Python module
-pip install maturin
-maturin develop --release
-
-# Use in Python
-import golden_binaural_core
-```
-
-## 📖 Usage
-
-### Basic Generation
-
-```python
-from golden_core import PhaseAnnihilator, save_wav
-
-# Create generator at 96kHz
-annihilator = PhaseAnnihilator(sample_rate=96000)
-
-# Generate 8-stage annealing sequence
-left, right = annihilator.generate_annealing_sequence(
-    num_stages=8,
-    base_frequency=432.0  # Sacred frequency
-)
-
-# Save as WAV
-save_wav("output.wav", left, right, 96000)
-```
-
-### Advanced Profiles
-
-```python
-from advanced_generator import AdvancedBinauralGenerator, PROFILES
-
-generator = AdvancedBinauralGenerator(sample_rate=96000)
-
-# Use predefined profile
-profile = PROFILES["deep_meditation"]
-left, right = generator.generate_from_profile(profile)
-```
-
-### Custom Profile
-
-```python
-from advanced_generator import (
-    AnnealingProfile, 
-    BrainwaveState, 
-    GoldenSequenceType
-)
-
-custom_profile = AnnealingProfile(
-    name="Custom Journey",
-    num_stages=13,  # Fibonacci number
-    base_frequency=528.0,  # DNA repair frequency
-    starting_state=BrainwaveState.ALPHA,
-    ending_state=BrainwaveState.DELTA,
-    sequence_type=GoldenSequenceType.DIVINE_SPIRAL,
-    total_duration_minutes=21,  # Fibonacci number
-)
-
-left, right = generator.generate_from_profile(custom_profile)
-```
-
-## 🎧 Listening Instructions
-
-1. **Use stereo headphones** (binaural requires separate ear signals)
-2. **Quiet environment** with minimal distractions
-3. **Comfortable position** - lying down recommended
-4. **Eyes closed** for full meditative effect
-5. **Volume**: Comfortable, not too loud
-
-### Expected Journey
-
-1. **Beginning**: Clear binaural beat sensation
-2. **Middle stages**: Deepening relaxation, beat becomes subtler
-3. **Final stages**: Approaching stillness
-4. **End**: Pure silence - phase cancellation achieved
-
-## 🔬 Technical Details
-
-### Audio Specifications
-
-- **Sample Rate**: 96,000 Hz (2× CD quality)
-- **Bit Depth**: 24-bit (144 dB dynamic range)
-- **Internal Processing**: 64-bit float
-- **Channels**: Stereo (binaural requires 2 channels)
-
-### Golden Ratio Properties Used
-
-1. **φ² = φ + 1** (self-similarity)
-2. **1/φ = φ - 1** (reciprocal relationship)
-3. **Fibonacci ratio limit** → φ
-4. **Golden angle** = 2π/φ² ≈ 137.5°
-5. **Golden spiral** = logarithmic spiral with φ growth
-
-### Precision Considerations
-
-The Python implementation uses `numpy.float64` (64-bit precision):
-- ~15-17 significant decimal digits
-- Range: ±1.7 × 10³⁰⁸
-
-The Rust core provides:
-- Native f64 with LLVM optimizations
-- SIMD vectorization where available
-- Deterministic floating-point operations
-
-## 📜 Sacred Frequencies
-
-| Frequency | Association |
-|-----------|-------------|
-| 432 Hz | Universal harmony, "Verdi's A" |
-| 528 Hz | DNA repair, "Love frequency" |
-| 639 Hz | Heart chakra, relationships |
-| 741 Hz | Awakening intuition |
-| 852 Hz | Third eye activation |
-
-## 🌟 The Divine Coherence
-
-Every parameter in this system relates to every other through the golden ratio:
-
-```
-Frequency₁ / Frequency₂ = φ
-Duration₁ / Duration₂ = φ  
-Transition / Segment = φ²
-Phase_step / Total = 1/φ
-Amplitude₁ / Amplitude₂ = √φ
-```
-
-This creates **perfect mathematical coherence** - the same proportion that appears in:
-- Nautilus shells
-- Galaxy spirals  
-- DNA helix
-- Human body proportions
-- Flower petals
-- Ancient architecture
+---
 
 ## 📄 License
 
-MIT License - Use freely for meditation, healing, and consciousness exploration.
+MIT License - see [LICENSE](../LICENSE)
+
+---
+
+## 🙏 Acknowledgments
+
+- **pymoo** team for NSGA-II implementation
+- **scikit-fem** for finite element solvers
+- All researchers whose papers informed this work (see bibliography)
 
 ---
 

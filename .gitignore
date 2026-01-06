@@ -1,1 +1,104 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Golden Studio - .gitignore
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ─── Virtual Environments ─────────────────────────────────────────────────────
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ─── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ─── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ─── Audio Files (large, generated) ───────────────────────────────────────────
 *.wav
+*.mp3
+*.flac
+*.aiff
+*.ogg
+
+# ─── Database (local development) ─────────────────────────────────────────────
+research.db/
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Build Artifacts ──────────────────────────────────────────────────────────
+binaural_golden/build/
+binaural_golden/dist/
+*.spec
+
+# ─── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Testing ──────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Model/Memory files (can be large) ────────────────────────────────────────
+*.pt
+*.pth
+*.pkl
+memory/
+
+# ─── Temporary ────────────────────────────────────────────────────────────────
+tmp/
+temp/
+*.tmp
+
+# ─── Secrets (never commit!) ──────────────────────────────────────────────────
+.env.local
+.env.*.local
+secrets.yaml
+*.key
+*.pem

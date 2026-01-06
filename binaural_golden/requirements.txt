@@ -1,3 +1,49 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Golden Studio - Dependencies
+# ═══════════════════════════════════════════════════════════════════════════════
+# Core evolutionary optimization framework for vibroacoustic plate design
+# 
+# Install: pip install -r requirements.txt
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Core Scientific Computing ────────────────────────────────────────────────
 numpy>=1.24.0
 scipy>=1.10.0
-pymoo>=0.6.0
+
+# ─── Multi-Objective Optimization ─────────────────────────────────────────────
+pymoo>=0.6.0                    # NSGA-II/III, Pareto optimization
+
+# ─── GUI Framework ────────────────────────────────────────────────────────────
+PySide6>=6.5.0                  # Qt6 for GUI (or PyQt6)
+# tkinter is built-in Python
+
+# ─── Machine Learning (for RDNN Memory) ───────────────────────────────────────
+torch>=2.0.0                    # PyTorch for LSTM/GRU memory
+
+# ─── Finite Element Analysis (Optional, accelerated) ──────────────────────────
+# jax>=0.4.20                   # Optional: JAX for accelerated FEM
+# jaxlib>=0.4.20                # Optional: JAX backend
+
+# ─── FEM Solvers ──────────────────────────────────────────────────────────────
+scikit-fem>=8.0.0               # Finite element method
+
+# ─── Audio Processing ─────────────────────────────────────────────────────────
+sounddevice>=0.4.6              # Real-time audio playback
+# soundfile>=0.12.1             # WAV file I/O
+
+# ─── HTTP/Database (for SurrealDB KB) ─────────────────────────────────────────
+httpx>=0.24.0                   # Async HTTP client
+requests>=2.28.0                # HTTP client
+
+# ─── 3D Export ────────────────────────────────────────────────────────────────
+numpy-stl>=3.0.0                # STL file export
+
+# ─── Utilities ────────────────────────────────────────────────────────────────
+pyyaml>=6.0                     # YAML config parsing
+# dataclasses included in Python 3.7+
+
+# ─── Development (Optional) ───────────────────────────────────────────────────
+# pytest>=7.0.0                 # Testing
+# pytest-cov>=4.0.0             # Coverage
+# black>=23.0.0                 # Code formatting
+# ruff>=0.1.0                   # Linting

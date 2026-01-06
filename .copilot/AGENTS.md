@@ -1,9 +1,11 @@
-# AGENTS.md — Knowledge Base System-Wide
+# AGENTS.MD — Knowledge Base System-Wide
 
 ## 🧠 MEMORIA AGENTE CONDIVISA
 
 Questo database contiene la **memoria persistente** condivisa tra tutti gli agenti AI.
 Include paper scientifici, algoritmi validati e **cronologia delle conversazioni**.
+
+**Documentazione completa**: `~/.config/surrealdb/AGENTS.md`
 
 ## Location Database
 
@@ -15,11 +17,18 @@ Include paper scientifici, algoritmi validati e **cronologia delle conversazioni
 
 ```
 ~/.config/surrealdb/scripts/
-├── knowledge_ingest.py      # Auto-fetch StackOverflow + ArXiv
+├── knowledge_ingest.py       # Multi-source: StackExchange (6 siti) + ArXiv
+├── push_algorithm.py         # Registra algoritmi validati con code snippets
 ├── import_chats_graph_rag.py # Import chat sessions (GraphRAG)
-├── import_chat_sessions.py   # Import sessioni Copilot
-└── classify_lessons.py       # Classificazione contenuti
+└── import_chat_sessions.py   # Import sessioni Copilot legacy
 ```
+
+### Nuove Fonti StackExchange
+- `stackoverflow` - General programming DSP/audio
+- `dsp` - DSP StackExchange (specializzato)
+- `music` - Music theory & acoustics
+- `physics` - Acoustics, waves, vibrations
+- `electronics` - Audio electronics, speakers
 
 ## Avvio Server
 
@@ -47,12 +56,45 @@ curl -X POST http://localhost:8000/sql \
 | Tabella | Records | Descrizione |
 |---------|---------|-------------|
 | **paper** | 86 | Paper scientifici (acustica, DSP, psicoacustica) |
-| **algorithm** | 6 | Algoritmi validati con success_metrics |
-| **knowledge** | 25 | StackOverflow + ArXiv content |
+| **algorithm** | 6 | Algoritmi validati con success_rate, code_snippet |
+| **knowledge** | 165+ | StackExchange (4 siti) + ArXiv content |
+| **distilled_insight** | 4 | Conoscenza distillata persistente (cymatics, FEM, etc) |
 | **chat_session** | 98 | Sessioni conversazionali complete |
 | **chat_message** | 2615 | Messaggi Q&A da sessioni Copilot |
-| **chat_agent** | 5 | Agenti usati (agent, vscode, etc) |
-| **chat_model** | 13 | Modelli LLM usati |
+| **entity** | varies | Entità estratte (concepts, technologies) |
+
+## 🔬 Distilled Insights (Conoscenza Persistente)
+
+Query per accedere alla conoscenza distillata:
+```sql
+-- Insight per dominio
+SELECT * FROM distilled_insight WHERE domain = 'vibroacoustic_therapy';
+
+-- Insight più rilevanti
+SELECT title, insight FROM distilled_insight ORDER BY relevance_score DESC;
+
+-- Insight applicabili a un progetto
+SELECT * FROM distilled_insight WHERE project_applicable CONTAINS 'golden-studio';
+```
+
+### Insight Attivi:
+1. **Chladni Patterns = Body Zone Targeting** (95%) - Cimatica applicata al corpo
+2. **FEM Modal Analysis per DML Plates** (92%) - Calcolo modi vibrazionali
+3. **Risonanza e Standing Waves per Terapia** (90%) - Frequenze terapeutiche
+4. **Knowledge Distillation per Fitness Evaluation** (88%) - Surrogate models
+| **chat_session** | 98 | Sessioni conversazionali complete |
+| **chat_message** | 2615 | Messaggi Q&A da sessioni Copilot |
+| **entity** | varies | Entità estratte (concepts, technologies) |
+
+## Knowledge Loop Workflow
+
+```
+1. INGEST    → knowledge_ingest.py (papers, Q&A da 6 fonti)
+2. IMPLEMENT → Codifica algoritmo nel progetto
+3. VALIDATE  → Esegui test, misura success_rate
+4. PUSH      → push_algorithm.py (con paper_sources, code_snippet)
+5. GRAPH     → Relazioni create automaticamente
+```
 
 ## Architettura GraphRAG
 
