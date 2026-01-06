@@ -101,16 +101,12 @@ temp/
 .env.*.local
 secrets.yaml
 *.key
-*.pem
+*.pem# ─── Cursor/Copilot (optional, keep or remove based on preference) ────────────
+# .copilot/
+# .cursor/
 
-# ─── Project-specific exclusions ──────────────────────────────────────────────
-# SurrealDB databases (local knowledge base)
-binaural_golden/docs/research/surrealdb/
-docs/research/surrealdb/
-*.sst
-*.blob
-*.clog
-*.manifest
-
-# Research database
-research.db/
+# ─── Private/Personal files ───────────────────────────────────────────────────
+papers to integrate in surreal/
+binaural_golden/history.txt
+binaural_golden/tests/*_results.json
+binaural_golden/docs/SESSION_*.md
