@@ -11,12 +11,28 @@ from .genome import (
     GenomeSchema,
     DictGenome,
     random_genome,
+    crossover_uniform,
+    crossover_blend,
+    mutate_gaussian,
+)
+from .coordinator import (
+    EvolutionState,
+    EvolutionResult,
+    EvolutionCoordinator,
 )
 
 __all__ = [
+    # Genome
     "Genome",
     "GeneSpec", 
     "GenomeSchema",
     "DictGenome",
     "random_genome",
+    "crossover_uniform",
+    "crossover_blend",
+    "mutate_gaussian",
+    # Coordinator
+    "EvolutionState",
+    "EvolutionResult",
+    "EvolutionCoordinator",
 ]
