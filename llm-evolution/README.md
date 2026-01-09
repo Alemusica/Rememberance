@@ -207,11 +207,20 @@ objectives = [
 required_tools = ["fem_modal_analysis", "mesh_generator"]
 ```
 
+## 📖 Documentazione
+
+| Doc | Descrizione |
+|-----|-------------|
+| [SETUP_GUIDE.md](SETUP_GUIDE.md) | Installazione completa passo-passo |
+| [STATUS.md](STATUS.md) | Stato attuale e checklist |
+| [STATE_OF_ART.md](STATE_OF_ART.md) | Confronto con repo di riferimento |
+
 ## 🔬 Research Basis
 
 - [LLM4EC Survey](https://github.com/wuxingyu-ai/LLM4EC) - IEEE TEVC
-- [LLaMEA](https://github.com/XAI-liacs/LLaMEA) - LLM-guided evolution
+- [LLaMEA](https://github.com/XAI-liacs/LLaMEA) - LLM-guided metaheuristics
 - [EvoAgentX](https://github.com/EvoAgentX/EvoAgentX) - Self-evolving agents
+- [OpenEvolve/FunSearch](https://arxiv.org/abs/2312.03130) - Algorithm discovery
 
 ## 📝 License
 
