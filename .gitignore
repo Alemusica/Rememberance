@@ -101,9 +101,21 @@ temp/
 .env.*.local
 secrets.yaml
 *.key
-*.pem# ─── Cursor/Copilot (optional, keep or remove based on preference) ────────────
-# .copilot/
-# .cursor/
+*.pem# ─── Cursor/Copilot ─────────────────────────────────────────────────────────
+.cursor/
+.copilot/
+
+# ─── SurrealDB Data ─────────────────────────────────────────────────────────
+**/surrealdb/
+binaural_golden/docs/research/surrealdb/
+evolution.db/
+*.blob
+*.sst
+*.clog
+MANIFEST-*
+OPTIONS-*
+IDENTITY
+LOCK
 
 # ─── Private/Personal files ───────────────────────────────────────────────────
 papers to integrate in surreal/
